@@ -178,3 +178,7 @@ Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md), the reposi
 MIT — see [LICENSE](LICENSE).
 
 Hermex is an independent client and is not affiliated with the upstream [hermes-webui](https://github.com/nesquena/hermes-webui) project. Android, Jetpack, and Google Play are trademarks of Google LLC. Apple and App Store are trademarks of Apple Inc.
+
+---
+
+[Support me on Ko-fi](https://ko-fi.com/hungchayqua)
