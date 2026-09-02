@@ -1108,7 +1108,7 @@ private fun TaskDetailSheet(
                     symbol = "×",
                     onClick = onDismiss,
                     tonalContainerColor = Color.Transparent,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(48.dp),
                 )
             }
 

@@ -1,5 +1,6 @@
 package com.uzairansar.hermex.ui.chat
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -164,6 +165,40 @@ class TranscriptAutoScrollPolicyTest {
                 lastVisibleIndex = 3,
                 lastVisibleOffset = -300,
                 lastVisibleSize = 1_200,
+                viewportEndOffset = 900,
+            ),
+        )
+    }
+
+    @Test
+    fun bottomDistanceReturnsOnlyTheVisibleTailGap() {
+        assertEquals(
+            120,
+            transcriptBottomDistancePixels(
+                totalItemsCount = 4,
+                lastVisibleIndex = 3,
+                lastVisibleOffset = 220,
+                lastVisibleSize = 800,
+                viewportEndOffset = 900,
+            ),
+        )
+        assertEquals(
+            0,
+            transcriptBottomDistancePixels(
+                totalItemsCount = 4,
+                lastVisibleIndex = 3,
+                lastVisibleOffset = -200,
+                lastVisibleSize = 1_100,
+                viewportEndOffset = 900,
+            ),
+        )
+        assertEquals(
+            null,
+            transcriptBottomDistancePixels(
+                totalItemsCount = 4,
+                lastVisibleIndex = 2,
+                lastVisibleOffset = 0,
+                lastVisibleSize = 100,
                 viewportEndOffset = 900,
             ),
         )

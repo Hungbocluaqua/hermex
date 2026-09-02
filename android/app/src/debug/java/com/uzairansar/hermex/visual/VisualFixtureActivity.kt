@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -27,7 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +43,28 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.uzairansar.hermex.R
 import com.uzairansar.hermex.data.preferences.AppThemeMode
+import com.uzairansar.hermex.data.preferences.StreamingSendBehavior
+import com.uzairansar.hermex.core.model.KanbanBoardSnapshot
+import com.uzairansar.hermex.core.model.KanbanCardSummary
+import com.uzairansar.hermex.core.model.KanbanColumn
+import com.uzairansar.hermex.core.model.ModelSummary
+import com.uzairansar.hermex.core.model.SessionSummary
+import com.uzairansar.hermex.ui.chat.ChatTopBar
+import com.uzairansar.hermex.ui.chat.ChatUiState
+import com.uzairansar.hermex.ui.chat.ComposerSurface
+import com.uzairansar.hermex.ui.chat.MarkdownText
+import com.uzairansar.hermex.ui.kanban.KanbanAvailability
+import com.uzairansar.hermex.ui.kanban.KanbanBoardContent
+import com.uzairansar.hermex.ui.kanban.KanbanLabUiState
+import com.uzairansar.hermex.ui.onboarding.OnboardingWelcomePage
+import com.uzairansar.hermex.ui.sessions.SessionRow
+import com.uzairansar.hermex.ui.settings.SettingsPickerRow
+import com.uzairansar.hermex.ui.settings.SettingsSection
+import com.uzairansar.hermex.ui.settings.SettingsToggleRow
 import com.uzairansar.hermex.ui.theme.HermesHeaderLogo
 import com.uzairansar.hermex.ui.theme.HermexColors
 import com.uzairansar.hermex.ui.theme.HermexGlassShape
@@ -59,16 +80,28 @@ object VisualFixtureContract {
     const val CatalogTag = "visual_fixture_catalog"
     const val OnboardingCatalogTag = "visual_fixture_catalog_onboarding_welcome"
     const val FrostedCatalogTag = "visual_fixture_catalog_frosted_surface"
+    const val ChatCatalogTag = "visual_fixture_catalog_chat"
+    const val SessionCatalogTag = "visual_fixture_catalog_session"
+    const val KanbanCatalogTag = "visual_fixture_catalog_kanban"
+    const val SettingsCatalogTag = "visual_fixture_catalog_settings"
     const val OnboardingRootTag = "visual_fixture_onboarding_welcome"
     const val OnboardingHeroTag = "visual_fixture_onboarding_hero"
     const val FrostedRootTag = "visual_fixture_frosted_surface"
     const val FrostedHeaderTag = "visual_fixture_frosted_header"
     const val FrostedComposerTag = "visual_fixture_frosted_composer"
+    const val SessionRootTag = "visual_fixture_session"
+    const val KanbanRootTag = "visual_fixture_kanban"
+    const val SettingsRootTag = "visual_fixture_settings"
+    const val ChatRootTag = "visual_fixture_chat"
 }
 
 enum class VisualFixture(val id: String) {
     OnboardingWelcome("onboarding-welcome"),
-    FrostedSurface("frosted-surface");
+    FrostedSurface("frosted-surface"),
+    Chat("chat"),
+    Session("session"),
+    Kanban("kanban"),
+    Settings("settings");
 
     companion object {
         fun fromId(id: String?): VisualFixture? = entries.firstOrNull { it.id == id }
@@ -91,10 +124,15 @@ class VisualFixtureActivity : ComponentActivity() {
 
 @Composable
 private fun VisualFixtureCatalog(initialFixture: VisualFixture?) {
-    var selectedFixture by rememberSaveable { mutableStateOf(initialFixture) }
+    // Fixture captures are intentionally ephemeral; recreation must always return to the catalog.
+    var selectedFixture by remember { mutableStateOf(initialFixture) }
     when (selectedFixture) {
         VisualFixture.OnboardingWelcome -> OnboardingWelcomeFixture()
         VisualFixture.FrostedSurface -> FrostedSurfaceFixture()
+        VisualFixture.Chat -> ChatFixture()
+        VisualFixture.Session -> SessionFixture()
+        VisualFixture.Kanban -> KanbanFixture()
+        VisualFixture.Settings -> SettingsFixture()
         null -> FixtureCatalog(onSelect = { selectedFixture = it })
     }
 }
@@ -105,10 +143,12 @@ private fun FixtureCatalog(onSelect: (VisualFixture) -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .testTag(VisualFixtureContract.CatalogTag),
+        backgroundColor = Color.Black,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 22.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
@@ -140,6 +180,30 @@ private fun FixtureCatalog(onSelect: (VisualFixture) -> Unit) {
                 title = "Frosted surface smoke",
                 detail = "Neutral layered chrome over the iOS-matched black backdrop",
                 onClick = { onSelect(VisualFixture.FrostedSurface) },
+            )
+            FixtureCatalogRow(
+                tag = VisualFixtureContract.ChatCatalogTag,
+                title = "Production chat",
+                detail = "Real chat chrome, Markdown, and composer in a deterministic state",
+                onClick = { onSelect(VisualFixture.Chat) },
+            )
+            FixtureCatalogRow(
+                tag = VisualFixtureContract.SessionCatalogTag,
+                title = "Production session row",
+                detail = "Real session list component in selected and streaming states",
+                onClick = { onSelect(VisualFixture.Session) },
+            )
+            FixtureCatalogRow(
+                tag = VisualFixtureContract.KanbanCatalogTag,
+                title = "Production Kanban",
+                detail = "Real Board content with filter and card interaction states",
+                onClick = { onSelect(VisualFixture.Kanban) },
+            )
+            FixtureCatalogRow(
+                tag = VisualFixtureContract.SettingsCatalogTag,
+                title = "Production settings",
+                detail = "Real settings rows at large-font-safe touch targets",
+                onClick = { onSelect(VisualFixture.Settings) },
             )
         }
     }
@@ -190,118 +254,11 @@ private fun OnboardingWelcomeFixture() {
         modifier = Modifier
             .fillMaxSize()
             .testTag(VisualFixtureContract.OnboardingRootTag),
+        backgroundColor = Color.Black,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 22.dp, vertical = 24.dp),
-        ) {
-            HermesHeaderLogo(
-                modifier = Modifier
-                    .width(118.dp)
-                    .align(Alignment.CenterHorizontally),
-            )
-            Spacer(Modifier.weight(0.75f))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(250.dp)
-                    .testTag(VisualFixtureContract.OnboardingHeroTag),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(250.dp)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    HermexColors.GoldBright.copy(alpha = 0.34f),
-                                    Color(0xFFFF8F1F).copy(alpha = 0.12f),
-                                    Color.Transparent,
-                                ),
-                            ),
-                        ),
-                )
-                Image(
-                    painter = painterResource(R.drawable.hermex_app_icon),
-                    contentDescription = "Hermex app icon",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .size(124.dp)
-                        .clip(RoundedCornerShape(27.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(27.dp)),
-                )
-            }
-            Spacer(Modifier.weight(0.75f))
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "Control your Hermes agent from Android.",
-                    color = Color.White,
-                    fontSize = 31.sp,
-                    lineHeight = 37.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "Connect to your self-hosted Web UI over Tailscale.",
-                    color = Color.White.copy(alpha = 0.58f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FixtureBadge("Password protected")
-                    FixtureBadge("Tailscale ready")
-                }
-            }
-            Spacer(Modifier.height(22.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .hermexGlass(shape = RoundedCornerShape(24.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                HermexPillButton(
-                    label = "Continue",
-                    onClick = {},
-                    modifier = Modifier.fillMaxWidth(),
-                    filled = true,
-                    filledContainerColor = HermexColors.GoldBright,
-                    filledContentColor = Color(0xFF15100A),
-                )
-                Text(
-                    text = "Already have a server?",
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                    color = Color.White.copy(alpha = 0.58f),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+        Box(Modifier.fillMaxSize().testTag(VisualFixtureContract.OnboardingHeroTag)) {
+            OnboardingWelcomePage()
         }
-    }
-}
-
-@Composable
-private fun FixtureBadge(label: String) {
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(5.dp)
-                .clip(CircleShape)
-                .background(HermexColors.GoldBright),
-        )
-        Text(
-            text = label,
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-        )
     }
 }
 
@@ -311,6 +268,7 @@ private fun FrostedSurfaceFixture() {
         modifier = Modifier
             .fillMaxSize()
             .testTag(VisualFixtureContract.FrostedRootTag),
+        backgroundColor = Color.Black,
     ) {
         Column(
             modifier = Modifier
@@ -452,8 +410,207 @@ private fun FrostedMessageCard(
 }
 
 @Composable
+private fun ChatFixture() {
+    val model = ModelSummary(id = "gpt-5.6", label = "GPT-5.6")
+    FixtureBackdrop(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(VisualFixtureContract.ChatRootTag),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            ChatTopBar(
+                title = "Android motion audit",
+                subtitle = "Local production fixture",
+                hasRepository = true,
+                showsFilesButton = true,
+                showsGitControls = true,
+                onBack = {},
+                onOpenWorkspace = {},
+                onOpenGit = {},
+                canClearConversation = true,
+                onClearConversation = {},
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("YOU", color = HermexColors.GoldBright, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                MarkdownText("Make Android feel native, deliberate, and calm.")
+                Text("HERMEX", color = Color(0xFF8DCBFF), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                MarkdownText("**Streaming stays readable** while the view follows only when you are already at the bottom.")
+            }
+            ComposerSurface(
+                state = ChatUiState(
+                    draft = "Review the motion timings",
+                    selectedModel = model,
+                    modelOptions = listOf(model),
+                ),
+                isVoiceDictating = false,
+                isVoiceDictationTranscribing = false,
+                voiceDictationError = null,
+                streamingSendBehavior = StreamingSendBehavior.Queue,
+                primaryActionTintColor = null,
+                showSecondaryBar = true,
+                onDraftChange = {},
+                onSend = {},
+                onStreamingSend = {},
+                onCancel = {},
+                onOpenModelPicker = {},
+                onOpenProfilePicker = {},
+                onOpenReasoningPicker = {},
+                onOpenWorkspacePicker = {},
+                onLoadWorkspaceSuggestions = {},
+                onAttach = {},
+                onVoiceDictation = {},
+                onVoiceNote = {},
+                onStopVoiceNote = {},
+                onCancelVoice = {},
+                onRemoveAttachment = {},
+                loadAttachmentImage = { null },
+                loadAttachmentFile = { null },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionFixture() {
+    FixtureBackdrop(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(VisualFixtureContract.SessionRootTag),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "Sessions",
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            SessionRow(
+                session = SessionSummary(
+                    sessionId = "fixture-streaming",
+                    title = "Polish Android motion without losing native behavior",
+                    workspace = "/workspace/hermex",
+                    model = "GPT-5.6",
+                    messageCount = 48,
+                    isStreaming = true,
+                    pinned = true,
+                ),
+                projects = emptyList(),
+                isMutating = false,
+                isViewingCachedData = false,
+                showsMessageCount = true,
+                showsWorkspace = true,
+                selected = true,
+                actionsExpanded = true,
+                onOpen = {},
+                onToggleActions = {},
+                onPin = {},
+                onArchive = {},
+                onCopyTitle = {},
+                onCopyDeepLink = {},
+                onRename = {},
+                onDelete = {},
+                onBranch = {},
+                onDuplicate = {},
+                onMove = {},
+                onExport = {},
+            )
+        }
+    }
+}
+
+@Composable
+private fun KanbanFixture() {
+    FixtureBackdrop(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(VisualFixtureContract.KanbanRootTag),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
+            KanbanBoardContent(
+                state = KanbanLabUiState(
+                    availability = KanbanAvailability.Content,
+                    selectedStatus = "ready",
+                    snapshot = KanbanBoardSnapshot(
+                        columns = listOf(
+                            KanbanColumn(
+                                name = "ready",
+                                cards = listOf(
+                                    KanbanCardSummary(
+                                        cardId = "CARD-42",
+                                        title = "Refine the Android interaction language",
+                                        status = "ready",
+                                        assignee = "builder",
+                                        priority = 1,
+                                        commentCount = 3,
+                                        ageSeconds = 3_600.0,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                onRefresh = {},
+                onSearch = {},
+                onSelectStatus = {},
+                onClearFilters = {},
+                onOpenCard = {},
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsFixture() {
+    FixtureBackdrop(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag(VisualFixtureContract.SettingsRootTag),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text(
+                "Settings",
+                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            SettingsSection(title = "Interaction") {
+                SettingsToggleRow(label = "Haptic Feedback", value = true, onValueChange = {})
+                SettingsPickerRow(
+                    label = "Send While Responding",
+                    value = "Queue",
+                    iconRes = R.drawable.ic_hermex_message_arrow,
+                    onClick = {},
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun FixtureBackdrop(
     modifier: Modifier = Modifier,
+    backgroundColor: Color = MaterialTheme.colorScheme.background,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = modifier) {
@@ -461,7 +618,7 @@ private fun FixtureBackdrop(
             modifier = Modifier
                 .matchParentSize()
                 .hermexHazeSource(zIndex = 1f, key = "visual-fixture-backdrop")
-                .background(Color.Black),
+                .background(backgroundColor),
         )
         content()
     }

@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,11 +47,14 @@ import com.uzairansar.hermex.core.model.GitDiffResponse
 import com.uzairansar.hermex.core.model.GitFileChange
 import com.uzairansar.hermex.data.repository.GitRepository
 import com.uzairansar.hermex.ui.theme.HermexCardShape
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexIconButton
 import com.uzairansar.hermex.ui.theme.HermexPillButton
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
+import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
 import com.uzairansar.hermex.ui.theme.hermexGlass
 import com.uzairansar.hermex.ui.theme.hermexHairline
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
 import com.uzairansar.hermex.ui.localization.localizedString
 
 @Composable
@@ -526,6 +530,8 @@ private fun GitFileRow(
     onClick: () -> Unit,
     onCheckedChange: () -> Unit,
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -535,12 +541,18 @@ private fun GitFileRow(
     ) {
         Checkbox(
             checked = checked,
-            onCheckedChange = { onCheckedChange() },
+            onCheckedChange = {
+                view.performHermexHaptic(HermexHapticEvent.Confirm, hapticsEnabled)
+                onCheckedChange()
+            },
         )
         Column(
             modifier = Modifier
                 .weight(1f)
-                .clickable(onClick = onClick)
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    onClick()
+                }
                 .padding(start = 8.dp),
         ) {
             Text(

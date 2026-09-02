@@ -9,6 +9,11 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,6 +68,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -101,13 +107,19 @@ import com.uzairansar.hermex.data.repository.CacheMaintenanceRepository
 import com.uzairansar.hermex.data.repository.PanelsRepository
 import com.uzairansar.hermex.data.secure.ServerAccount
 import com.uzairansar.hermex.ui.theme.HermexCardShape
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexGlassShape
 import com.uzairansar.hermex.ui.theme.HermexIconButton
 import com.uzairansar.hermex.ui.theme.HermexPillButton
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
 import com.uzairansar.hermex.ui.theme.HermesHeaderLogo
+import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
 import com.uzairansar.hermex.ui.theme.hermexColorFromHex
 import com.uzairansar.hermex.ui.theme.hermexGlass
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
+import com.uzairansar.hermex.ui.theme.tweenOrSnap
 import com.uzairansar.hermex.ui.notifications.AndroidNotificationPermissionPolicy
 import com.uzairansar.hermex.ui.chat.StreamStatusNotifier
 import com.uzairansar.hermex.ui.localization.localizedString
@@ -702,7 +714,7 @@ private fun SettingsHeader(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SettingsSection(
+internal fun SettingsSection(
     title: String,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -911,12 +923,17 @@ private fun SettingsAccessoryRow(
     iconRes: Int,
     onClick: () -> Unit,
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 54.dp)
             .padding(vertical = 6.dp)
-            .clickable(onClick = onClick),
+            .clickable {
+                view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                onClick()
+            },
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -937,17 +954,22 @@ private fun SettingsAccessoryRow(
 }
 
 @Composable
-private fun SettingsPickerRow(
+internal fun SettingsPickerRow(
     label: String,
     value: String,
     iconRes: Int,
     onClick: () -> Unit,
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 54.dp)
-            .clickable(onClick = onClick),
+            .clickable {
+                view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                onClick()
+            },
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1138,6 +1160,8 @@ private fun AppIconSettingsPicker(
     onToggleExpanded: () -> Unit,
     onSelect: (AppIconChoice) -> Unit,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1160,14 +1184,23 @@ private fun AppIconSettingsPicker(
         )
     }
 
-    if (isExpanded) {
-        Spacer(Modifier.height(8.dp))
-        AppIconChoice.entries.forEach { choice ->
-            AppIconChoiceRow(
-                choice = choice,
-                isSelected = choice == selected,
-                onClick = { onSelect(choice) },
-            )
+    AnimatedVisibility(
+        visible = isExpanded,
+        enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+            fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+        exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+            fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+        label = "settings-app-icon-choices",
+    ) {
+        Column {
+            Spacer(Modifier.height(8.dp))
+            AppIconChoice.entries.forEach { choice ->
+                AppIconChoiceRow(
+                    choice = choice,
+                    isSelected = choice == selected,
+                    onClick = { onSelect(choice) },
+                )
+            }
         }
     }
 
@@ -1278,7 +1311,7 @@ private fun SettingsPickerSummaryRow(
 }
 
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     label: String,
     iconRes: Int? = null,
     value: Boolean,
@@ -1286,6 +1319,8 @@ private fun SettingsToggleRow(
     switchTestTag: String? = null,
     onValueChange: (Boolean) -> Unit,
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1294,7 +1329,10 @@ private fun SettingsToggleRow(
                 value = value,
                 enabled = enabled,
                 role = Role.Switch,
-                onValueChange = onValueChange,
+                onValueChange = {
+                    view.performHermexHaptic(HermexHapticEvent.Confirm, hapticsEnabled)
+                    onValueChange(it)
+                },
             )
             .heightIn(min = 54.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),

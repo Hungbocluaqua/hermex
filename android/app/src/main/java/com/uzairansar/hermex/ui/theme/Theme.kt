@@ -139,6 +139,7 @@ private val HermexShapes = Shapes(
 @Composable
 fun HermexDarkContent(content: @Composable () -> Unit) {
     val view = LocalView.current
+    val motionPolicy = rememberHermexMotionPolicy()
     SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
         WindowCompat.getInsetsController(window, view).apply {
@@ -153,6 +154,8 @@ fun HermexDarkContent(content: @Composable () -> Unit) {
     ) {
         CompositionLocalProvider(
             LocalHermexSurfaceTokens provides DarkHermexSurfaceTokens,
+            LocalHermexMotionScheme provides HermexMotionScheme(),
+            LocalHermexMotionPolicy provides motionPolicy,
             content = content,
         )
     }
@@ -171,6 +174,7 @@ fun HermexTheme(
     // Haze's legacy RenderScript path can lag on scrolling screens; Android 12+ uses RenderEffect.
     val hazeState = rememberHazeState(blurEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
     val surfaceTokens = if (darkTheme) DarkHermexSurfaceTokens else LightHermexSurfaceTokens
+    val motionPolicy = rememberHermexMotionPolicy()
     val view = LocalView.current
 
     SideEffect {
@@ -196,6 +200,8 @@ fun HermexTheme(
         CompositionLocalProvider(
             LocalHermexHazeState provides hazeState,
             LocalHermexSurfaceTokens provides surfaceTokens,
+            LocalHermexMotionScheme provides HermexMotionScheme(),
+            LocalHermexMotionPolicy provides motionPolicy,
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(

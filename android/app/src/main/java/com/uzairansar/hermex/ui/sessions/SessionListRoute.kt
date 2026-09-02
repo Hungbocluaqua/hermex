@@ -8,9 +8,15 @@ import android.content.res.Configuration
 import android.graphics.Color as AndroidColor
 import androidx.annotation.DrawableRes
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -72,16 +78,20 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -112,12 +122,19 @@ import com.uzairansar.hermex.ui.theme.HermexColors
 import com.uzairansar.hermex.ui.theme.HermexGlassShape
 import com.uzairansar.hermex.ui.theme.HermexIconButton
 import com.uzairansar.hermex.ui.theme.HermexPillButton
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
+import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
 import com.uzairansar.hermex.ui.theme.hermexGlass
 import com.uzairansar.hermex.ui.theme.hermexColorFromHex
 import com.uzairansar.hermex.ui.theme.hermexBackgroundColor
 import com.uzairansar.hermex.ui.theme.hermexPrimaryActionContainerColor
 import com.uzairansar.hermex.ui.theme.hermexPrimaryActionContentColor
 import com.uzairansar.hermex.ui.theme.primaryActionTintApplies
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
+import com.uzairansar.hermex.ui.theme.springOrSnap
+import com.uzairansar.hermex.ui.theme.tweenOrSnap
 import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
@@ -176,6 +193,8 @@ fun SessionListRoute(
         },
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val headerLogoColorHex = loggedIn.account.headerLogoColorHex
     val shortcutKey = listOfNotNull(shortcutAction, shortcutNonce).joinToString(":")
     var shortcutConsumed by rememberSaveable(shortcutKey) { mutableStateOf(false) }
@@ -257,7 +276,7 @@ fun SessionListRoute(
             clipboard.setPrimaryClip(ClipData.newPlainText("Hermex session deeplink", deepLink))
         }
     }
-    val sessionRowContent: @Composable (SessionSummary, String) -> Unit = { session, rowKey ->
+    val sessionRowContent: @Composable (SessionSummary, String, Modifier) -> Unit = { session, rowKey, modifier ->
         SessionRow(
             session = session,
             projects = state.projects,
@@ -281,6 +300,7 @@ fun SessionListRoute(
             onDuplicate = { viewModel.duplicate(session) },
             onMove = { projectId -> viewModel.move(session, projectId) },
             onExport = { format -> viewModel.exportSession(session, format) },
+            modifier = modifier,
         )
     }
 
@@ -427,7 +447,19 @@ fun SessionListRoute(
                                 items = scheduledRows,
                                 key = { index, session -> "scheduled:${session.stableId}:$index" },
                             ) { index, session ->
-                                sessionRowContent(session, "scheduled:${session.stableId}:$index")
+                                sessionRowContent(
+                                    session,
+                                    "scheduled:${session.stableId}:$index",
+                                    if (!state.isLoading && !state.isMutating) {
+                                        Modifier.animateItem(
+                                            fadeInSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                            placementSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                            fadeOutSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
                             }
                             if (!searchIsActive && scheduledGroups.hasAdditionalScheduledSessions) {
                                 item(key = "scheduled_sessions_view_all") {
@@ -461,7 +493,19 @@ fun SessionListRoute(
                             items = ordinarySessions,
                             key = { index, session -> "ordinary:${session.stableId}:$index" },
                         ) { index, session ->
-                            sessionRowContent(session, "ordinary:${session.stableId}:$index")
+                            sessionRowContent(
+                                session,
+                                "ordinary:${session.stableId}:$index",
+                                if (!state.isLoading && !state.isMutating) {
+                                    Modifier.animateItem(
+                                        fadeInSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                        placementSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                        fadeOutSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                    )
+                                } else {
+                                    Modifier
+                                },
+                            )
                         }
                     }
                 }
@@ -572,6 +616,13 @@ private fun ScheduledSessionsDisclosureHeader(
     searchIsActive: Boolean,
     onToggle: () -> Unit,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis),
+        label = "scheduled-disclosure-chevron",
+    )
     val accessibilityLabel = localizedString(
         when {
             searchIsActive -> "Scheduled sessions"
@@ -621,7 +672,7 @@ private fun ScheduledSessionsDisclosureHeader(
                 colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurfaceVariant),
                 modifier = Modifier
                     .size(16.dp)
-                    .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                    .graphicsLayer { rotationZ = chevronRotation },
             )
         }
     }
@@ -667,8 +718,10 @@ private fun ScheduledSessionsScreen(
     onQueryChange: (String) -> Unit,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
-    sessionRowContent: @Composable (SessionSummary, String) -> Unit,
+    sessionRowContent: @Composable (SessionSummary, String, Modifier) -> Unit,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val sessions = state.scheduledSessions(query)
     PullToRefreshBox(
         isRefreshing = state.isLoading,
@@ -734,7 +787,19 @@ private fun ScheduledSessionsScreen(
                     items = sessions,
                     key = { index, session -> "scheduled-all:${session.stableId}:$index" },
                 ) { index, session ->
-                    sessionRowContent(session, "scheduled-all:${session.stableId}:$index")
+                    sessionRowContent(
+                        session,
+                        "scheduled-all:${session.stableId}:$index",
+                        if (!state.isLoading && !state.isMutating) {
+                            Modifier.animateItem(
+                                fadeInSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                placementSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                                fadeOutSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
                 }
             }
         }
@@ -797,6 +862,8 @@ private fun SessionSearchChrome(
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(expanded) {
@@ -809,6 +876,9 @@ private fun SessionSearchChrome(
         modifier = modifier
             .height(48.dp)
             .then(if (expanded) Modifier.fillMaxWidth() else Modifier.width(96.dp))
+            .animateContentSize(
+                animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis),
+            )
             .hermexGlass(shape = CircleShape, castsShadow = false)
             .padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(if (expanded) 8.dp else 4.dp),
@@ -1271,7 +1341,7 @@ private fun ProjectSection(
                     onClick = onAddProject,
                     enabled = !isViewingCachedData && !isMutating,
                     tonalContainerColor = Color.Transparent,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(48.dp),
                 )
             }
             if (selectedProjectId != null) {
@@ -1339,6 +1409,8 @@ private fun ProjectFilterSubrow(
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1398,10 +1470,17 @@ private fun ProjectFilterSubrow(
                 onClick = onToggleActions,
                 enabled = actionsEnabled,
                 tonalContainerColor = Color.Transparent,
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(48.dp),
             )
         }
-        if (actionsExpanded) {
+        AnimatedVisibility(
+            visible = actionsExpanded,
+            enter = fadeIn(motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+                expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)),
+            exit = fadeOut(motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+                shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)),
+            label = "project-actions",
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1567,7 +1646,7 @@ private fun EmptySessionsRow() {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SessionRow(
+internal fun SessionRow(
     session: SessionSummary,
     projects: List<ProjectSummary>,
     isMutating: Boolean,
@@ -1588,12 +1667,25 @@ private fun SessionRow(
     onDuplicate: () -> Unit,
     onMove: (String?) -> Unit,
     onExport: (SessionExportFormat) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val metadata = session.sessionRowMetadataLabel(showsMessageCount, showsWorkspace)
     val mutationActionsEnabled = !isMutating && !session.isSessionReadOnly
     val rowMinimumHeight = if (metadata != null || session.isActiveStreaming || isViewingCachedData || session.isSessionReadOnly) 54.dp else 46.dp
+    val selectionProgress by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis),
+        label = "session-selection",
+    )
+    val selectionColor = lerp(
+        hermexBackgroundColor(),
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        selectionProgress,
+    )
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         SessionSwipeContainer(
             enabled = mutationActionsEnabled,
@@ -1606,8 +1698,7 @@ private fun SessionRow(
                     .fillMaxWidth()
                     .heightIn(min = rowMinimumHeight)
                     .background(
-                        if (selected) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-                        else hermexBackgroundColor(),
+                        selectionColor,
                     )
                     .semantics { this.selected = selected }
                     .testTag("session_row_${session.stableId}")
@@ -1674,7 +1765,13 @@ private fun SessionRow(
             }
             }
         }
-        if (actionsExpanded) {
+        AnimatedVisibility(
+            visible = actionsExpanded,
+            enter = fadeIn(motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+                expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)),
+            exit = fadeOut(motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+                shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)),
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1722,6 +1819,11 @@ private fun SessionSwipeContainer(
     onDelete: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
+    val view = LocalView.current
+    val archiveActionLabel = localizedString(if (archived) "Restore" else "Archive")
+    val deleteActionLabel = localizedString("Delete")
     val revealWidthPx = with(LocalDensity.current) { 168.dp.toPx() }
     val viewConfiguration = LocalViewConfiguration.current
     val swipeViewConfiguration = remember(viewConfiguration) {
@@ -1767,6 +1869,28 @@ private fun SessionSwipeContainer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer { translationX = offsetPx }
+                    .semantics {
+                        if (enabled) {
+                            customActions = listOf(
+                                CustomAccessibilityAction(
+                                    label = archiveActionLabel,
+                                    action = {
+                                        view.performHermexHaptic(HermexHapticEvent.Confirm, hapticsEnabled)
+                                        onArchive()
+                                        true
+                                    },
+                                ),
+                                CustomAccessibilityAction(
+                                    label = deleteActionLabel,
+                                    action = {
+                                        view.performHermexHaptic(HermexHapticEvent.Warning, hapticsEnabled)
+                                        onDelete()
+                                        true
+                                    },
+                                ),
+                            )
+                        }
+                    }
                     .draggable(
                         enabled = enabled,
                         orientation = Orientation.Horizontal,
@@ -1780,16 +1904,17 @@ private fun SessionSwipeContainer(
                                 offsetPx <= -revealWidthPx * 0.18f -> -revealWidthPx
                                 else -> 0f
                             }
+                            val wasClosed = offsetPx > -0.5f
                             animate(
                                 initialValue = offsetPx,
                                 targetValue = targetOffset,
                                 initialVelocity = velocity,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioNoBouncy,
-                                    stiffness = Spring.StiffnessMedium,
-                                ),
+                                animationSpec = motionPolicy.springOrSnap(Spring.StiffnessMedium),
                             ) { value, _ ->
                                 offsetPx = value
+                            }
+                            if (wasClosed && targetOffset < -0.5f) {
+                                view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
                             }
                         },
                     ),

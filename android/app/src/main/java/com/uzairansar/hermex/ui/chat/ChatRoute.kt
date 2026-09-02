@@ -13,13 +13,20 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import android.view.HapticFeedbackConstants
 import android.widget.MediaController
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -32,6 +39,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -185,10 +193,14 @@ import com.uzairansar.hermex.data.share.SharedDraftStore
 import com.uzairansar.hermex.ui.theme.HermexCardShape
 import com.uzairansar.hermex.ui.theme.HermexGlassShape
 import com.uzairansar.hermex.ui.theme.HermexIconButton
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexPillButton
 import com.uzairansar.hermex.ui.theme.HermexSelectorPill
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
 import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
 import com.uzairansar.hermex.ui.git.HermexGitDiffContent
 import com.uzairansar.hermex.ui.theme.hermexColorFromHex
 import com.uzairansar.hermex.ui.theme.hermexGlass
@@ -196,6 +208,7 @@ import com.uzairansar.hermex.ui.theme.hermexHazeSource
 import com.uzairansar.hermex.ui.theme.hermexPrimaryActionContainerColor
 import com.uzairansar.hermex.ui.theme.hermexPrimaryActionContentColor
 import com.uzairansar.hermex.ui.theme.primaryActionTintApplies
+import com.uzairansar.hermex.ui.theme.tweenOrSnap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -332,6 +345,8 @@ fun ChatRoute(
     }
     val hapticView = LocalView.current
     val hapticsEnabled = LocalHermexHapticsEnabled.current
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val latestResponseCompletionNotificationsEnabled by rememberUpdatedState(responseCompletionNotificationsEnabled)
     val latestShowResponseExcerpts by rememberUpdatedState(chatDisplaySettings.showsStatusNotificationResponseExcerpts)
     val recorder = remember(context) { VoiceNoteRecorder(context) }
@@ -605,11 +620,13 @@ fun ChatRoute(
                 viewportEndOffset = layout.viewportEndOffset,
                 tolerancePixels = nearBottomTolerancePx,
             )
-            val distanceFromBottom = when {
-                layout.totalItemsCount == 0 -> 0
-                lastVisible?.index != layout.totalItemsCount - 1 -> Int.MAX_VALUE
-                else -> (lastVisible.offset + lastVisible.size - layout.viewportEndOffset).coerceAtLeast(0)
-            }
+            val distanceFromBottom = transcriptBottomDistancePixels(
+                totalItemsCount = layout.totalItemsCount,
+                lastVisibleIndex = lastVisible?.index ?: -1,
+                lastVisibleOffset = lastVisible?.offset ?: 0,
+                lastVisibleSize = lastVisible?.size ?: 0,
+                viewportEndOffset = layout.viewportEndOffset,
+            ) ?: Int.MAX_VALUE
             TranscriptScrollMetrics(
                 observation = TranscriptScrollObservation(
                     isUserDragging = isTranscriptDragged,
@@ -643,6 +660,7 @@ fun ChatRoute(
         composerHeightPx,
         statusStackHeightPx,
         transcriptScrollCooldownActive,
+        motionPolicy,
     ) {
         if (!shouldAutoScrollTranscript(
                 followsBottom = followsTranscriptBottom,
@@ -652,7 +670,7 @@ fun ChatRoute(
         ) {
             return@LaunchedEffect
         }
-        delay(32)
+        delay(motionPolicy.scaledMillis(32).toLong())
         if (!shouldAutoScrollTranscript(
                 followsBottom = followsTranscriptBottom,
                 isScrollInProgress = transcriptListState.isScrollInProgress,
@@ -661,8 +679,7 @@ fun ChatRoute(
         ) {
             return@LaunchedEffect
         }
-        val lastItem = transcriptListState.layoutInfo.totalItemsCount - 1
-        if (lastItem >= 0) transcriptListState.animateScrollToItem(lastItem)
+        transcriptListState.followTranscriptBottom(motionPolicy, motion)
     }
 
     LaunchedEffect(isTranscriptAtBottom, followsTranscriptBottom, transcriptScrollCooldownActive) {
@@ -682,8 +699,7 @@ fun ChatRoute(
             !transcriptListState.isScrollInProgress &&
             !transcriptScrollCooldownActive
         ) {
-            val lastItem = transcriptListState.layoutInfo.totalItemsCount - 1
-            if (lastItem >= 0) transcriptListState.scrollToItem(lastItem, Int.MAX_VALUE)
+            transcriptListState.followTranscriptBottom(motionPolicy, motion)
         }
     }
 
@@ -705,8 +721,7 @@ fun ChatRoute(
                 !transcriptListState.isScrollInProgress &&
                 !transcriptScrollCooldownActive
             ) {
-                val lastItem = transcriptListState.layoutInfo.totalItemsCount - 1
-                if (lastItem >= 0) transcriptListState.scrollToItem(lastItem, Int.MAX_VALUE)
+                transcriptListState.followTranscriptBottom(motionPolicy, motion)
             }
         }
     }
@@ -830,15 +845,9 @@ fun ChatRoute(
                             hasError = hasError,
                         )
                     ) {
-                        ChatHapticEvent.MessageSent -> hapticView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                        ChatHapticEvent.ResponseCompleted -> hapticView.performHapticFeedback(
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                HapticFeedbackConstants.CONFIRM
-                            } else {
-                                HapticFeedbackConstants.LONG_PRESS
-                            },
-                        )
-                        ChatHapticEvent.StreamCancelled -> hapticView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        ChatHapticEvent.MessageSent -> hapticView.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                        ChatHapticEvent.ResponseCompleted -> hapticView.performHermexHaptic(HermexHapticEvent.Success, hapticsEnabled)
+                        ChatHapticEvent.StreamCancelled -> hapticView.performHermexHaptic(HermexHapticEvent.Cancel, hapticsEnabled)
                         ChatHapticEvent.None -> Unit
                     }
                 }
@@ -1654,7 +1663,7 @@ private fun AttachmentInfoRow(
 }
 
 @Composable
-private fun ChatTopBar(
+internal fun ChatTopBar(
     title: String,
     subtitle: String?,
     hasRepository: Boolean,
@@ -1734,7 +1743,7 @@ private fun ChatTopBar(
                     symbol = "\u2302",
                     onClick = onOpenWorkspace,
                     tonalContainerColor = Color.Transparent,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(48.dp),
                 )
             }
             if (showsGitControls && hasRepository) {
@@ -1743,7 +1752,7 @@ private fun ChatTopBar(
                     symbol = "Git",
                     onClick = onOpenGit,
                     tonalContainerColor = Color.Transparent,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(48.dp),
                 )
             }
             Box {
@@ -1752,7 +1761,7 @@ private fun ChatTopBar(
                     symbol = "\u22ef",
                     onClick = { actionsExpanded = true },
                     tonalContainerColor = Color.Transparent,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(48.dp),
                 )
                 DropdownMenu(
                     expanded = actionsExpanded,
@@ -1788,46 +1797,67 @@ private fun ChatStatusStack(
             .padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        if (state.isViewingCachedData) InlineNotice("Offline cache")
-        state.activeStreamRecoveryLabel?.let { recoveryLabel ->
-            StreamRecoveryStatusPill(recoveryLabel)
+        ChatDisclosureVisibility(state.isViewingCachedData) { InlineNotice("Offline cache") }
+        ChatDisclosureVisibility(state.activeStreamRecoveryLabel != null) {
+            state.activeStreamRecoveryLabel?.let { StreamRecoveryStatusPill(it) }
         }
-        if (!state.isRecoveringStream) {
+        ChatDisclosureVisibility(!state.isRecoveringStream && state.notice != null) {
             state.notice?.let { InlineNotice(it) }
         }
-        if (!state.showsTranscriptErrorState) {
+        ChatDisclosureVisibility(!state.showsTranscriptErrorState && state.error != null) {
             state.error?.let { InlineNotice(it, isError = true) }
         }
-        if (state.pendingLocalUploadCount > 0 && !state.isUploadingAttachment) {
+        ChatDisclosureVisibility(state.pendingLocalUploadCount > 0 && !state.isUploadingAttachment) {
             HermexPillButton(
                 label = localizedString("Retry"),
                 onClick = onRetryUploads,
             )
         }
-        if (state.isSessionApprovalBypassEnabled) {
+        ChatDisclosureVisibility(state.isSessionApprovalBypassEnabled) {
             ApprovalBypassStatusPill()
         }
-        state.pendingApproval?.let { approval ->
-            ApprovalCard(
-                approval = approval,
-                count = state.pendingApprovalCount,
-                isResponding = state.isRespondingToPendingPrompt,
-                onChoice = onApprovalChoice,
-                onSkipAll = onSkipApprovals,
-            )
+        ChatDisclosureVisibility(state.pendingApproval != null) {
+            state.pendingApproval?.let { approval ->
+                ApprovalCard(
+                    approval = approval,
+                    count = state.pendingApprovalCount,
+                    isResponding = state.isRespondingToPendingPrompt,
+                    onChoice = onApprovalChoice,
+                    onSkipAll = onSkipApprovals,
+                )
+            }
         }
-        state.pendingClarification?.let { clarification ->
-            ClarificationCard(
-                clarification = clarification,
-                count = state.pendingClarificationCount,
-                draft = state.clarificationDraft,
-                isResponding = state.isRespondingToPendingPrompt,
-                onDraftChange = onClarificationDraftChange,
-                onSubmit = onClarificationSubmit,
-                onChoice = onClarificationChoice,
-            )
+        ChatDisclosureVisibility(state.pendingClarification != null) {
+            state.pendingClarification?.let { clarification ->
+                ClarificationCard(
+                    clarification = clarification,
+                    count = state.pendingClarificationCount,
+                    draft = state.clarificationDraft,
+                    isResponding = state.isRespondingToPendingPrompt,
+                    onDraftChange = onClarificationDraftChange,
+                    onSubmit = onClarificationSubmit,
+                    onChoice = onClarificationChoice,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ChatDisclosureVisibility(
+    visible: Boolean,
+    content: @Composable () -> Unit,
+) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+            fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+        exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis)) +
+            fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+        content = { content() },
+    )
 }
 
 @Composable
@@ -2070,10 +2100,15 @@ private fun SlashAutocompleteSurface(
     result: SlashAutocompleteResult,
     onSelect: (SlashAutocompleteSuggestion) -> Unit,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 280.dp)
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(16.dp),
                 surfaceLevel = HermexSurfaceLevel.Floating,
@@ -2100,7 +2135,10 @@ private fun SlashAutocompleteSurface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
-                            .clickable { onSelect(suggestion) }
+                            .clickable {
+                                view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                                onSelect(suggestion)
+                            }
                             .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2166,7 +2204,7 @@ private fun SlashAutocompleteSurface(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ComposerSurface(
+internal fun ComposerSurface(
     state: ChatUiState,
     isVoiceDictating: Boolean,
     isVoiceDictationTranscribing: Boolean,
@@ -2193,6 +2231,8 @@ private fun ComposerSurface(
     loadAttachmentFile: suspend (String) -> FileResponse?,
 ) {
     var previewAttachment by remember { mutableStateOf<UploadResponse?>(null) }
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val messageDescription = localizedString("message").replaceFirstChar { character ->
         if (character.isLowerCase()) character.titlecase() else character.toString()
     }
@@ -2227,6 +2267,7 @@ private fun ComposerSurface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 8.dp)
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis))
             .testTag("chat_composer"),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -2241,7 +2282,14 @@ private fun ComposerSurface(
             isVoiceDictating -> ComposerVoiceDictationStatus("Listening...", isError = false)
             voiceDictationError != null -> ComposerVoiceDictationStatus(voiceDictationError, isError = true)
         }
-        if (slashAutocompleteResult.isVisible) {
+        AnimatedVisibility(
+            visible = slashAutocompleteResult.isVisible,
+            enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+            exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+            label = "composer-slash-suggestions",
+        ) {
             SlashAutocompleteSurface(
                 result = slashAutocompleteResult,
                 onSelect = { suggestion -> onDraftChange(suggestion.replacement) },
@@ -2255,7 +2303,14 @@ private fun ComposerSurface(
                     surfaceLevel = HermexSurfaceLevel.Floating,
                 ),
         ) {
-            if (state.pendingAttachments.isNotEmpty()) {
+            AnimatedVisibility(
+                visible = state.pendingAttachments.isNotEmpty(),
+                enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                    fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+                exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                    fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+                label = "composer-attachments",
+            ) {
                 ComposerAttachmentStrip(
                     attachments = state.pendingAttachments,
                     onRemove = onRemoveAttachment,
@@ -2338,11 +2393,19 @@ private fun ComposerSurface(
                     onLongClick = onVoiceNote,
                     enabled = !state.isStreaming && !state.isViewingCachedData && !state.isRecordingVoiceNote && !state.isTranscribingVoiceNote && !state.isRunningSessionAction,
                 )
+                AnimatedContent(
+                    targetState = state.isStreaming,
+                    transitionSpec = {
+                        fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)) togetherWith
+                            fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis))
+                    },
+                    label = "composer-send-stop",
+                ) { isStreaming ->
                 HermexIconButton(
-                    label = localizedString(if (state.isStreaming) "Stop" else "Send"),
+                    label = localizedString(if (isStreaming) "Stop" else "Send"),
                     symbol = if (state.isStreaming) "■" else "↑",
-                    onClick = if (state.isStreaming) onCancel else onSend,
-                    enabled = if (state.isStreaming) {
+                    onClick = if (isStreaming) onCancel else onSend,
+                    enabled = if (isStreaming) {
                         true
                     } else {
                         state.draft.isNotBlank() &&
@@ -2354,17 +2417,25 @@ private fun ComposerSurface(
                     },
                     filled = true,
                     filledContainerColor = hermexPrimaryActionContainerColor(
-                        if (state.isStreaming) true else state.draft.isNotBlank() && !state.isViewingCachedData && !state.isRunningSessionAction && !state.isUploadingAttachment && !state.isRecordingVoiceNote && !state.isTranscribingVoiceNote,
+                        if (isStreaming) true else state.draft.isNotBlank() && !state.isViewingCachedData && !state.isRunningSessionAction && !state.isUploadingAttachment && !state.isRecordingVoiceNote && !state.isTranscribingVoiceNote,
                         primaryActionTintColor,
                     ),
                     filledContentColor = hermexPrimaryActionContentColor(
-                        if (state.isStreaming) true else state.draft.isNotBlank() && !state.isViewingCachedData && !state.isRunningSessionAction && !state.isUploadingAttachment && !state.isRecordingVoiceNote && !state.isTranscribingVoiceNote,
+                        if (isStreaming) true else state.draft.isNotBlank() && !state.isViewingCachedData && !state.isRunningSessionAction && !state.isUploadingAttachment && !state.isRecordingVoiceNote && !state.isTranscribingVoiceNote,
                         primaryActionTintColor,
                     ),
                     modifier = Modifier.size(48.dp),
                 )
+                }
             }
-            if (state.isStreaming && state.draft.isNotBlank()) {
+            AnimatedVisibility(
+                visible = state.isStreaming && state.draft.isNotBlank(),
+                enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                    fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+                exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                    fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+                label = "composer-streaming-actions",
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2383,7 +2454,14 @@ private fun ComposerSurface(
                 }
             }
         }
-        if (!isImeVisible && showSecondaryBar) {
+        AnimatedVisibility(
+            visible = !isImeVisible && showSecondaryBar,
+            enter = expandVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                fadeIn(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+            exit = shrinkVertically(animationSpec = motionPolicy.tweenOrSnap(motion.composerMillis)) +
+                fadeOut(animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis)),
+            label = "composer-secondary-bar",
+        ) {
             ComposerSecondaryBar(
                 state = state,
                 onOpenWorkspacePicker = onOpenWorkspacePicker,
@@ -2410,6 +2488,8 @@ private fun ComposerInlineIconButton(
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean,
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Image(
         painter = painterResource(iconRes),
         contentDescription = label,
@@ -2418,12 +2498,21 @@ private fun ComposerInlineIconButton(
             .clip(CircleShape)
             .then(
                 if (onLongClick == null) {
-                    Modifier.clickable(enabled = enabled, onClick = onClick)
+                    Modifier.clickable(enabled = enabled) {
+                        view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                        onClick()
+                    }
                 } else {
                     Modifier.combinedClickable(
                         enabled = enabled,
-                        onClick = onClick,
-                        onLongClick = onLongClick,
+                        onClick = {
+                            view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                            onClick()
+                        },
+                        onLongClick = {
+                            view.performHermexHaptic(HermexHapticEvent.Confirm, hapticsEnabled)
+                            onLongClick()
+                        },
                     )
                 },
             )
@@ -2735,7 +2824,7 @@ private fun ListenPlaybackBar(
                     symbol = if (state.isPlaying) "Ⅱ" else "▶",
                     onClick = onTogglePlayPause,
                     enabled = state.isReady,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(48.dp),
                 )
             }
             Column(Modifier.weight(1f)) {
@@ -2785,7 +2874,7 @@ private fun ListenPlaybackBar(
                 label = localizedString("Stop Listening"),
                 symbol = "×",
                 onClick = onStop,
-                modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(48.dp),
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -5019,10 +5108,15 @@ private fun MarkerMessageCard(
     val cardBody = markerCardBody(kind, content)
     val summary = markerSummary(kind, cardBody)
     var expanded by remember { mutableStateOf(false) }
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(10.dp),
                 castsShadow = false,
@@ -5035,7 +5129,10 @@ private fun MarkerMessageCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { expanded = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    expanded = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5067,7 +5164,7 @@ private fun MarkerMessageCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             SelectionContainer {
                 Text(
                     cardBody.ifBlank { kind.title },
@@ -5096,6 +5193,10 @@ private fun ReasoningAccessoryCard(
     if (trimmed.isEmpty()) return
     var userToggledExpansion by remember { mutableStateOf<Boolean?>(null) }
     val expanded = userToggledExpansion ?: startsExpanded
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     val summary = trimmed
         .replace('\n', ' ')
         .trim()
@@ -5104,6 +5205,7 @@ private fun ReasoningAccessoryCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(10.dp),
                 castsShadow = false,
@@ -5116,7 +5218,10 @@ private fun ReasoningAccessoryCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { userToggledExpansion = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    userToggledExpansion = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5147,7 +5252,7 @@ private fun ReasoningAccessoryCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             SelectionContainer {
                 Text(
                     trimmed,
@@ -5169,10 +5274,15 @@ private fun LiveToolActivityCard(
     var userToggledExpansion by remember { mutableStateOf<Boolean?>(null) }
     val expanded = userToggledExpansion ?: startsExpanded
     val accentColor = MaterialTheme.colorScheme.secondary
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(10.dp),
                 castsShadow = false,
@@ -5185,7 +5295,10 @@ private fun LiveToolActivityCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { userToggledExpansion = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    userToggledExpansion = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5217,7 +5330,7 @@ private fun LiveToolActivityCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             ToolDetailSection(title = localizedString("Activity"), value = trimmed)
         }
     }
@@ -5226,25 +5339,32 @@ private fun LiveToolActivityCard(
 @Composable
 private fun AssistantTypingIndicator() {
     val typingDescription = localizedString("Hermex is preparing a response")
-    val transition = rememberInfiniteTransition(label = "assistant-typing")
-    val scale by transition.animateFloat(
-        initialValue = 0.86f,
-        targetValue = 1.16f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "assistant-typing-scale",
-    )
-    val opacity by transition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 0.95f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "assistant-typing-opacity",
-    )
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val (scale, opacity) = if (motionPolicy.continuousMotionEnabled) {
+        val transition = rememberInfiniteTransition(label = "assistant-typing")
+        val animatedScale by transition.animateFloat(
+            initialValue = 0.86f,
+            targetValue = 1.16f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = motionPolicy.scaledMillis(motion.typingPulseMillis)),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "assistant-typing-scale",
+        )
+        val animatedOpacity by transition.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = motionPolicy.scaledMillis(motion.typingPulseMillis)),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "assistant-typing-opacity",
+        )
+        animatedScale to animatedOpacity
+    } else {
+        1f to 0.78f
+    }
     val dotColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
     Box(
         modifier = Modifier
@@ -5285,9 +5405,14 @@ private fun GitTurnChangesCard(
     onOpenFile: (GitFileChange) -> Unit,
 ) {
     var expanded by remember(summary) { mutableStateOf(true) }
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(10.dp),
                 castsShadow = false,
@@ -5300,7 +5425,10 @@ private fun GitTurnChangesCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { expanded = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    expanded = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5343,7 +5471,7 @@ private fun GitTurnChangesCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 summary.changes.forEach { change ->
                     GitTurnChangeRow(
@@ -5541,9 +5669,14 @@ private fun ToolActivityCard(
     val hasFailure = tools.any { it.isError == true }
     val accentColor = if (hasFailure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
     val summary = tools.joinToString(", ") { it.displayName }.ifBlank { "Tool activity" }
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(10.dp),
                 castsShadow = false,
@@ -5556,7 +5689,10 @@ private fun ToolActivityCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { userToggledExpansion = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    userToggledExpansion = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5591,7 +5727,7 @@ private fun ToolActivityCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 tools.forEach { tool ->
                     ToolCallCard(tool, startsExpanded = startsExpanded)
@@ -5609,9 +5745,14 @@ private fun ToolCallCard(
     var userToggledExpansion by remember { mutableStateOf<Boolean?>(null) }
     val expanded = userToggledExpansion ?: startsExpanded
     val accentColor = if (tool.isError == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize(animationSpec = motionPolicy.tweenOrSnap(motion.disclosureMillis))
             .hermexGlass(
                 shape = RoundedCornerShape(9.dp),
                 castsShadow = false,
@@ -5624,7 +5765,10 @@ private fun ToolCallCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(7.dp))
-                .clickable { userToggledExpansion = !expanded },
+                .clickable {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    userToggledExpansion = !expanded
+                },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -5653,7 +5797,7 @@ private fun ToolCallCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        if (expanded) {
+        ChatDisclosureVisibility(expanded) {
             ToolCallDetails(tool)
         }
     }
@@ -6860,4 +7004,32 @@ private fun attachmentExtension(vararg candidates: String?): String =
 private fun String.lastPathComponentFallback(): String {
     val trimmed = trim().trimEnd('/', '\\')
     return trimmed.substringAfterLast('/').substringAfterLast('\\').ifBlank { this }
+}
+
+private suspend fun androidx.compose.foundation.lazy.LazyListState.followTranscriptBottom(
+    motionPolicy: com.uzairansar.hermex.ui.theme.HermexMotionPolicy,
+    motion: com.uzairansar.hermex.ui.theme.HermexMotionScheme,
+) {
+    val lastItem = layoutInfo.totalItemsCount - 1
+    if (lastItem < 0) return
+    if (!motionPolicy.animationsEnabled) {
+        scrollToItem(lastItem, Int.MAX_VALUE)
+        return
+    }
+
+    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+    val distance = transcriptBottomDistancePixels(
+        totalItemsCount = layoutInfo.totalItemsCount,
+        lastVisibleIndex = lastVisible?.index ?: -1,
+        lastVisibleOffset = lastVisible?.offset ?: 0,
+        lastVisibleSize = lastVisible?.size ?: 0,
+        viewportEndOffset = layoutInfo.viewportEndOffset,
+    )
+    when {
+        distance == null -> animateScrollToItem(lastItem)
+        distance > 0 -> animateScrollBy(
+            value = distance.toFloat(),
+            animationSpec = motionPolicy.tweenOrSnap<Float>(motion.scrollFollowMillis),
+        )
+    }
 }

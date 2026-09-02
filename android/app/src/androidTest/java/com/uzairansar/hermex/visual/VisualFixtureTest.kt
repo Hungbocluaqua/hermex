@@ -12,9 +12,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,12 +30,16 @@ class VisualFixtureTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<VisualFixtureActivity>()
 
+    @Before
+    fun resetFixtureActivity() {
+        // Each capture starts from the catalog so test order cannot leak fixture state.
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+    }
+
     @Test
     fun onboardingWelcomeCapturesWithStableSemanticBounds() {
-        composeRule.onNodeWithTag(VisualFixtureContract.OnboardingCatalogTag)
-            .assertIsDisplayed()
-            .performClick()
-        composeRule.waitForIdle()
+        openFixture(VisualFixtureContract.OnboardingCatalogTag)
 
         val rootNode = composeRule.onNodeWithTag(VisualFixtureContract.OnboardingRootTag)
         val rootBounds = rootNode.fetchSemanticsNode().boundsInRoot
@@ -53,10 +59,7 @@ class VisualFixtureTest {
 
     @Test
     fun frostedSurfaceCapturesWithStableSemanticBounds() {
-        composeRule.onNodeWithTag(VisualFixtureContract.FrostedCatalogTag)
-            .assertIsDisplayed()
-            .performClick()
-        composeRule.waitForIdle()
+        openFixture(VisualFixtureContract.FrostedCatalogTag)
 
         val rootNode = composeRule.onNodeWithTag(VisualFixtureContract.FrostedRootTag)
         val rootBounds = rootNode.fetchSemanticsNode().boundsInRoot
@@ -89,9 +92,57 @@ class VisualFixtureTest {
         saveScreenshot("frosted-surface.png", image)
     }
 
+    @Test
+    fun productionChatFixtureCapturesWithStableBounds() {
+        openFixture(VisualFixtureContract.ChatCatalogTag)
+
+        val root = composeRule.onNodeWithTag(VisualFixtureContract.ChatRootTag)
+        val bounds = root.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertValidBounds(bounds, "chat fixture")
+        saveScreenshot("production-chat.png", captureWindowRegion(root))
+    }
+
+    @Test
+    fun productionSessionFixtureCapturesWithStableBounds() {
+        openFixture(VisualFixtureContract.SessionCatalogTag)
+
+        val root = composeRule.onNodeWithTag(VisualFixtureContract.SessionRootTag)
+        val bounds = root.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertValidBounds(bounds, "session fixture")
+        saveScreenshot("production-session.png", captureWindowRegion(root))
+    }
+
+    @Test
+    fun productionKanbanFixtureCapturesWithStableBounds() {
+        openFixture(VisualFixtureContract.KanbanCatalogTag)
+
+        val root = composeRule.onNodeWithTag(VisualFixtureContract.KanbanRootTag)
+        val bounds = root.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertValidBounds(bounds, "kanban fixture")
+        saveScreenshot("production-kanban.png", captureWindowRegion(root))
+    }
+
+    @Test
+    fun productionSettingsFixtureCapturesWithStableBounds() {
+        openFixture(VisualFixtureContract.SettingsCatalogTag)
+
+        val root = composeRule.onNodeWithTag(VisualFixtureContract.SettingsRootTag)
+        val bounds = root.assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertValidBounds(bounds, "settings fixture")
+        saveScreenshot("production-settings.png", captureWindowRegion(root))
+    }
+
     private fun assertValidBounds(bounds: Rect, label: String) {
         assertTrue("$label width should be positive", bounds.width > 0f)
         assertTrue("$label height should be positive", bounds.height > 0f)
+    }
+
+    private fun openFixture(tag: String) {
+        composeRule.onNodeWithTag(tag)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.waitForIdle()
     }
 
     private fun assertContained(child: Rect, parent: Rect, label: String) {

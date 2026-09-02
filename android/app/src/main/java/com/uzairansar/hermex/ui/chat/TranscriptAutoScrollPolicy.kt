@@ -64,3 +64,16 @@ internal fun isTranscriptBottomVisible(
     lastVisibleIndex == totalItemsCount - 1 &&
         lastVisibleOffset + lastVisibleSize <= viewportEndOffset + tolerancePixels
     )
+
+/** Returns the exact pixel gap that must be consumed to pin the last item to the viewport. */
+internal fun transcriptBottomDistancePixels(
+    totalItemsCount: Int,
+    lastVisibleIndex: Int,
+    lastVisibleOffset: Int,
+    lastVisibleSize: Int,
+    viewportEndOffset: Int,
+): Int? = when {
+    totalItemsCount <= 0 -> 0
+    lastVisibleIndex != totalItemsCount - 1 -> null
+    else -> (lastVisibleOffset + lastVisibleSize - viewportEndOffset).coerceAtLeast(0)
+}

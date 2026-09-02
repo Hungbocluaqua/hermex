@@ -1,16 +1,18 @@
 package com.uzairansar.hermex.ui.chat
 
-import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.text.style.ForegroundColorSpan
+import android.text.style.ReplacementSpan
+import android.text.style.ClickableSpan
 import android.view.View
 import android.widget.TextView
 import androidx.compose.foundation.background
@@ -55,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.uzairansar.hermex.ui.localization.localizedString
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolver
 import io.noties.markwon.Markwon
@@ -86,12 +90,18 @@ fun MarkdownText(
     isStreaming: Boolean = false,
     streamedTextAnimationEnabled: Boolean = false,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     var usesStreamingRenderer by remember { mutableStateOf(isStreaming) }
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
             usesStreamingRenderer = true
         } else if (usesStreamingRenderer) {
-            delay(STREAMING_SUFFIX_FADE_DURATION_MILLIS)
+            delay(
+                motionPolicy.scaledMillis(
+                    motion.streamingRevealMillis + motion.streamingMaximumLeadMillis,
+                ).toLong(),
+            )
             usesStreamingRenderer = false
         }
     }
@@ -220,8 +230,6 @@ private fun StreamingStructuredMarkdown(
 }
 
 private const val STREAM_RENDER_INTERVAL_MILLIS = 100L
-private const val STREAMING_SUFFIX_FADE_DURATION_MILLIS = 220L
-private const val STREAMING_SUFFIX_START_ALPHA = 72
 private const val MAX_STRUCTURED_MARKDOWN_CHARACTERS = 80_000
 private const val PLAIN_TEXT_CHUNK_CHARACTERS = 16_000
 
@@ -270,6 +278,8 @@ private fun MarkdownAndroidView(
     val dividerColor = colorScheme.outlineVariant.toArgb()
     val isDarkTheme = colorScheme.background.luminance() < 0.5f
     val latexTextSizePx = with(LocalDensity.current) { 15.sp.toPx() }
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val markwon = remember(context, textColor, linkColor, codeBackground, dividerColor, isDarkTheme, latexTextSizePx) {
         try {
             MarkdownRendererCache.get(
@@ -334,13 +344,19 @@ private fun MarkdownAndroidView(
                 val viewState = textView.tag as? StreamingMarkdownViewState
                     ?: StreamingMarkdownViewState().also { textView.tag = it }
                 val nextText = parsed.toString()
-                if (viewState.renderer === renderer && viewState.renderedText == nextText) return@let
-                viewState.animator?.cancel()
+                if (viewState.renderer === renderer && viewState.renderedText == nextText) {
+                    if (!isStreaming || !streamedTextAnimationEnabled || !motionPolicy.streamingRevealEnabled) {
+                        (textView.text as? Spannable)?.let(viewState::clearReveal)
+                    }
+                    return@let
+                }
                 val suffixStart = streamingSuffixStart(viewState.previousText, nextText)
+                val isAppend = viewState.previousText.isNotEmpty() && suffixStart == viewState.previousText.length
                 val spannable = SpannableStringBuilder(parsed)
                 try {
                     renderer.setParsedMarkdown(textView, spannable)
                 } catch (_: Exception) {
+                    (textView.text as? Spannable)?.let(viewState::clearReveal)
                     textView.text = markdown
                     viewState.previousText = markdown
                     viewState.renderedText = markdown
@@ -348,13 +364,34 @@ private fun MarkdownAndroidView(
                     return@let
                 }
                 val displayedText = textView.text as? Spannable ?: spannable
+                val fadeDurationMillis = motionPolicy.scaledMillis(motion.streamingRevealMillis)
+                val nowMillis = SystemClock.uptimeMillis()
                 if (
                     isStreaming &&
                     streamedTextAnimationEnabled &&
-                    ValueAnimator.areAnimatorsEnabled() &&
+                    motionPolicy.streamingRevealEnabled &&
+                    isAppend &&
                     suffixStart < displayedText.length
                 ) {
-                    animateStreamingSuffix(textView, displayedText, suffixStart, textColor, viewState)
+                    viewState.pruneCompleted(nowMillis, fadeDurationMillis)
+                    viewState.stamps += viewState.scheduler.schedule(
+                        text = displayedText.toString(),
+                        start = suffixStart,
+                        nowMillis = nowMillis,
+                        graphemeStaggerMillis = motionPolicy.scaledMillis(motion.streamingGraphemeStaggerMillis),
+                        maximumLeadMillis = motionPolicy.scaledMillis(motion.streamingMaximumLeadMillis),
+                    ).filterNot { stamp ->
+                        hasConflictingStreamingSpans(displayedText, stamp.start, stamp.end)
+                    }
+                    startStreamingRevealLoop(
+                        textView = textView,
+                        text = displayedText,
+                        baseColor = textColor,
+                        state = viewState,
+                        fadeDurationMillis = fadeDurationMillis,
+                    )
+                } else if (!isAppend || !motionPolicy.streamingRevealEnabled || !streamedTextAnimationEnabled) {
+                    viewState.clearReveal(displayedText)
                 }
                 viewState.previousText = nextText
                 viewState.renderedText = nextText
@@ -384,49 +421,94 @@ internal fun streamingSuffixStart(previous: String, current: String): Int {
     return index
 }
 
-private fun animateStreamingSuffix(
+private fun startStreamingRevealLoop(
     textView: TextView,
     text: Spannable,
-    start: Int,
     baseColor: Int,
     state: StreamingMarkdownViewState,
+    fadeDurationMillis: Int,
 ) {
-    var span: ForegroundColorSpan? = null
-    val animator = ValueAnimator.ofInt(STREAMING_SUFFIX_START_ALPHA, 255).apply {
-        duration = STREAMING_SUFFIX_FADE_DURATION_MILLIS
-        addUpdateListener { animation ->
-            span?.let(text::removeSpan)
-            val alpha = animation.animatedValue as Int
-            span = ForegroundColorSpan((baseColor and 0x00FFFFFF) or (alpha shl 24)).also { colorSpan ->
-                text.setSpan(colorSpan, start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    if (state.stamps.isEmpty() || fadeDurationMillis <= 0) {
+        state.clearReveal(text)
+        return
+    }
+    val generation = state.beginFrameLoop(text)
+    val frame = object : Runnable {
+        override fun run() {
+            if (state.frameGeneration != generation) return
+            state.activeSpans.forEach(text::removeSpan)
+            state.activeSpans.clear()
+            val nowMillis = SystemClock.uptimeMillis()
+            var hasPendingReveal = false
+            state.stamps.forEach { stamp ->
+                if (stamp.start !in 0..text.length || stamp.end !in 0..text.length || stamp.start >= stamp.end) {
+                    return@forEach
+                }
+                val ageMillis = nowMillis - stamp.revealAtMillis
+                val alpha = streamingRevealAlpha(ageMillis, fadeDurationMillis)
+                if (alpha < 255) {
+                    ForegroundColorSpan((baseColor and 0x00FFFFFF) or (alpha shl 24)).also { span ->
+                        text.setSpan(span, stamp.start, stamp.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        state.activeSpans += span
+                    }
+                    hasPendingReveal = true
+                }
             }
             textView.invalidate()
-        }
-        addListener(object : android.animation.AnimatorListenerAdapter() {
-            private var finished = false
-
-            private fun finish(animation: android.animation.Animator) {
-                if (finished) return
-                finished = true
-                span?.let(text::removeSpan)
-                textView.invalidate()
-                if (state.animator === animation) state.animator = null
+            if (hasPendingReveal) {
+                textView.postOnAnimation(this)
+            } else {
+                state.clearReveal(text)
             }
-
-            override fun onAnimationEnd(animation: android.animation.Animator) = finish(animation)
-            override fun onAnimationCancel(animation: android.animation.Animator) = finish(animation)
-        })
+        }
     }
-    state.animator = animator
-    animator.start()
+    textView.postOnAnimation(frame)
 }
 
-private data class StreamingMarkdownViewState(
+private fun hasConflictingStreamingSpans(text: Spanned, start: Int, end: Int): Boolean =
+    text.getSpans(start, end, Any::class.java).any { span ->
+        span is ReplacementSpan ||
+            span is ClickableSpan ||
+            streamingRevealExcludesSpanClassName(span.javaClass.name)
+    }
+
+internal fun streamingRevealExcludesSpanClassName(className: String): Boolean {
+    val name = className.lowercase()
+    return name.contains("code") ||
+        name.contains("table") ||
+        name.contains("latex") ||
+        name.contains("math")
+}
+
+private class StreamingMarkdownViewState(
     var previousText: String = "",
     var renderedText: String = "",
     var renderer: Markwon? = null,
-    var animator: ValueAnimator? = null,
-)
+) {
+    val scheduler = StreamingRevealScheduler()
+    val stamps = mutableListOf<StreamingRevealStamp>()
+    val activeSpans = mutableListOf<ForegroundColorSpan>()
+    var frameGeneration: Int = 0
+
+    fun beginFrameLoop(text: Spannable): Int {
+        activeSpans.forEach(text::removeSpan)
+        activeSpans.clear()
+        frameGeneration += 1
+        return frameGeneration
+    }
+
+    fun pruneCompleted(nowMillis: Long, fadeDurationMillis: Int) {
+        stamps.removeAll { nowMillis - it.revealAtMillis >= fadeDurationMillis }
+    }
+
+    fun clearReveal(text: Spannable) {
+        frameGeneration += 1
+        activeSpans.forEach(text::removeSpan)
+        activeSpans.clear()
+        stamps.clear()
+        scheduler.reset()
+    }
+}
 
 private object MarkdownRendererCache {
     private const val MAX_RENDERERS = 6

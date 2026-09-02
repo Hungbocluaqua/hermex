@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -72,11 +73,14 @@ import com.uzairansar.hermex.data.repository.WorkspaceRepository
 import com.uzairansar.hermex.ui.chat.MarkdownText
 import com.uzairansar.hermex.ui.createExportDirectory
 import com.uzairansar.hermex.ui.theme.HermexCardShape
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexIconButton
 import com.uzairansar.hermex.ui.theme.HermexPillButton
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
+import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
 import com.uzairansar.hermex.ui.theme.hermexGlass
 import com.uzairansar.hermex.ui.theme.hermexHairline
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -394,13 +398,22 @@ private fun WorkspaceSearchBar(
 }
 
 @Composable
-private fun WorkspaceEntryRow(entry: WorkspaceEntry, onClick: () -> Unit) {
+private fun WorkspaceEntryRow(
+    entry: WorkspaceEntry,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val isDirectory = entry.type == "directory" || entry.type == "dir" || entry.type == "folder"
     val entryPath = entry.path ?: entry.name
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable {
+                view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                onClick()
+            }
             .hermexHairline(HermexCardShape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),

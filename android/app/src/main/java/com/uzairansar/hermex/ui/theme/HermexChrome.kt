@@ -1,11 +1,13 @@
 package com.uzairansar.hermex.ui.theme
 
-import android.view.HapticFeedbackConstants
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -34,6 +37,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -301,8 +305,23 @@ fun HermexPillButton(
 ) {
     val view = LocalView.current
     val hapticsEnabled = LocalHermexHapticsEnabled.current
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && motionPolicy.animationsEnabled) 0.975f else 1f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.pressMillis),
+        label = "hermex-pill-press",
+    )
+    val tactileModifier = modifier
+        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
     val hapticClick = {
-        if (hapticsEnabled) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
         onClick()
     }
     val filledContainer = filledContainerColor ?: MaterialTheme.colorScheme.primary
@@ -313,26 +332,27 @@ fun HermexPillButton(
         androidx.compose.material3.Button(
             onClick = hapticClick,
             enabled = enabled,
-            modifier = modifier.defaultMinSize(minHeight = 0.dp),
+            modifier = tactileModifier,
             shape = HermexPillShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = filledContainer,
                 contentColor = filledContent,
             ),
             contentPadding = contentPadding,
+            interactionSource = interactionSource,
         ) {
             if (leading != null) leading()
             Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         }
     } else {
         val outlinedModifier = if (outlinedContainerColor == null) {
-            modifier.hermexGlass(
+            tactileModifier.hermexGlass(
                 shape = HermexPillShape,
                 castsShadow = false,
                 surfaceLevel = HermexSurfaceLevel.Raised,
             )
         } else {
-            modifier
+            tactileModifier
                 .clip(HermexPillShape)
                 .background(outlinedContainerColor)
                 .hermexHairline(HermexPillShape)
@@ -340,7 +360,7 @@ fun HermexPillButton(
         OutlinedButton(
             onClick = hapticClick,
             enabled = enabled,
-            modifier = outlinedModifier.defaultMinSize(minHeight = 0.dp),
+            modifier = outlinedModifier,
             shape = HermexPillShape,
             border = null,
             colors = ButtonDefaults.outlinedButtonColors(
@@ -348,6 +368,7 @@ fun HermexPillButton(
                 contentColor = outlinedContent,
             ),
             contentPadding = contentPadding,
+            interactionSource = interactionSource,
         ) {
             if (leading != null) leading()
             Text(label, style = MaterialTheme.typography.labelMedium)
@@ -370,6 +391,15 @@ fun HermexSelectorPill(
 ) {
     val view = LocalView.current
     val hapticsEnabled = LocalHermexHapticsEnabled.current
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && motionPolicy.animationsEnabled) 0.975f else 1f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.pressMillis),
+        label = "hermex-selector-press",
+    )
     val content = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.82f else 0.42f)
     val shape = HermexPillShape
     val baseModifier = modifier
@@ -377,7 +407,11 @@ fun HermexSelectorPill(
             min = minWidth ?: Dp.Unspecified,
             max = maxWidth ?: Dp.Unspecified,
         )
-        .defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
         .semantics { contentDescription = label }
         .clip(shape)
     val styledModifier = if (glassed) {
@@ -392,13 +426,14 @@ fun HermexSelectorPill(
 
     TextButton(
         onClick = {
-            if (hapticsEnabled) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
             onClick()
         },
         enabled = enabled,
         modifier = styledModifier,
         shape = shape,
         contentPadding = contentPadding,
+        interactionSource = interactionSource,
         colors = ButtonDefaults.textButtonColors(
             contentColor = content,
             disabledContentColor = content,
@@ -447,6 +482,15 @@ fun HermexIconButton(
 ) {
     val view = LocalView.current
     val hapticsEnabled = LocalHermexHapticsEnabled.current
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled && motionPolicy.animationsEnabled) 0.94f else 1f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.pressMillis),
+        label = "hermex-icon-press",
+    )
     val container = if (filled) {
         filledContainerColor ?: MaterialTheme.colorScheme.primary
     } else {
@@ -460,7 +504,11 @@ fun HermexIconButton(
     val iconResource = hermexIconResource(label, symbol)
     val displaySymbol = normalizedHermexIconSymbol(label, symbol)
     val baseModifier = modifier
-        .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
+        .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
         .semantics { contentDescription = label }
     val styledModifier = when {
         filled -> baseModifier
@@ -479,13 +527,14 @@ fun HermexIconButton(
     }
     TextButton(
         onClick = {
-            if (hapticsEnabled) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
             onClick()
         },
         enabled = enabled,
         modifier = styledModifier,
         shape = CircleShape,
         contentPadding = PaddingValues(0.dp),
+        interactionSource = interactionSource,
         colors = ButtonDefaults.textButtonColors(contentColor = content),
     ) {
         Box(Modifier.padding(bottom = 1.dp)) {

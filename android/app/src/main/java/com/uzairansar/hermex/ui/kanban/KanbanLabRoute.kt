@@ -1,7 +1,9 @@
 package com.uzairansar.hermex.ui.kanban
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +49,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -72,10 +76,17 @@ import com.uzairansar.hermex.data.repository.KanbanBrowseDataSource
 import com.uzairansar.hermex.ui.localization.localizedString
 import com.uzairansar.hermex.ui.localization.localizedPluralString
 import com.uzairansar.hermex.ui.theme.HermexCardShape
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexIconButton
 import com.uzairansar.hermex.ui.theme.HermexPillButton
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
+import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
 import com.uzairansar.hermex.ui.theme.hermexGlass
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
+import com.uzairansar.hermex.ui.theme.tweenOrSnap
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,11 +120,26 @@ internal fun KanbanLabRoute(
     var editorCardId by rememberSaveable { mutableStateOf<String?>(null) }
     var editorSessionId by rememberSaveable { mutableStateOf(0) }
     var pendingRunningAction by remember { mutableStateOf<KanbanPendingRunningAction?>(null) }
+    var queuedRunningBulkAction by remember { mutableStateOf<KanbanBulkAction?>(null) }
     var pendingRunningBulkAction by remember { mutableStateOf<KanbanBulkAction?>(null) }
     var confirmsBulkArchive by rememberSaveable { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+
+    LaunchedEffect(queuedRunningBulkAction, showsBulkActions) {
+        val action = queuedRunningBulkAction ?: return@LaunchedEffect
+        if (showsBulkActions) return@LaunchedEffect
+        delay(motionPolicy.scaledMillis(motion.disclosureMillis).toLong())
+        if (queuedRunningBulkAction == action) {
+            queuedRunningBulkAction = null
+            pendingRunningBulkAction = action
+        }
+    }
 
     LaunchedEffect(state.selectedBoardSlug) {
+        queuedRunningBulkAction = null
+        pendingRunningBulkAction = null
         if (state.selectedBoardSlug == null) {
             cardNavigationStack = emptyList()
             editorOpen = false
@@ -320,7 +346,7 @@ internal fun KanbanLabRoute(
                     }
                     action is KanbanBulkAction.ChangeStatus && viewModel.bulkSelectionContainsRunning() -> {
                         showsBulkActions = false
-                        pendingRunningBulkAction = action
+                        queuedRunningBulkAction = action
                     }
                     else -> {
                         showsBulkActions = false
@@ -638,6 +664,8 @@ internal fun KanbanBoardContent(
     onRetryFailedBulk: () -> Unit = {},
     onCheckUncertainBulk: () -> Unit = {},
 ) {
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     Column(Modifier.fillMaxSize()) {
         when {
             state.isOffline -> KanbanConnectivityBanner(
@@ -721,12 +749,15 @@ internal fun KanbanBoardContent(
                 val count = kanbanStatusCount(state.snapshot, status, state.searchQuery)
                 FilterChip(
                     selected = state.selectedStatus == status,
-                    onClick = { onSelectStatus(status) },
+                    onClick = {
+                        view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                        onSelectStatus(status)
+                    },
                     label = { Text("$title  $count") },
                     leadingIcon = {
                         Box(Modifier.size(8.dp).background(kanbanStatusColor(status), CircleShape))
                     },
-                    modifier = Modifier.heightIn(min = 44.dp).testTag("kanban_status_$status"),
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("kanban_status_$status"),
                 )
             }
         }
@@ -962,6 +993,10 @@ private fun KanbanCardList(
     onToggleCardSelection: (KanbanCardSummary) -> Unit,
 ) {
     val groups = if (state.filters.groupByProfile) groupedKanbanCards(cards) else listOf(KanbanCardGroup(null, cards))
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    // Avoid list movement while a write or a refresh is awaiting the server's canonical state.
+    val canAnimateListMutation = workflowState.activeCardIds.isEmpty() && !state.isRefreshing
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("kanban_card_list"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
@@ -993,6 +1028,15 @@ private fun KanbanCardList(
                     isSelectingCards = isSelectingCards,
                     isSelected = card.cardId in selectedCardIds,
                     onToggleSelection = onToggleCardSelection,
+                    modifier = if (canAnimateListMutation) {
+                        Modifier.animateItem(
+                            fadeInSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                            placementSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                            fadeOutSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                        )
+                    } else {
+                        Modifier
+                    },
                 )
             }
         }
@@ -1012,7 +1056,12 @@ private fun KanbanCardRow(
     isSelectingCards: Boolean,
     isSelected: Boolean,
     onToggleSelection: (KanbanCardSummary) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
+    val view = LocalView.current
+    val hapticsEnabled = LocalHermexHapticsEnabled.current
     val title = card.title?.trim().takeUnless { it.isNullOrEmpty() } ?: localizedString("Card")
     val id = card.cardId ?: localizedString("Unknown")
     val profile = card.assignee?.trim().takeUnless { it.isNullOrEmpty() } ?: localizedString("Unassigned")
@@ -1027,12 +1076,28 @@ private fun KanbanCardRow(
         KanbanStaleness.Critical -> MaterialTheme.colorScheme.error
         KanbanStaleness.None -> MaterialTheme.colorScheme.secondary
     }
+    val selectionProgress by animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0f,
+        animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis),
+        label = "kanban-card-selection",
+    )
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .hermexGlass(shape = HermexCardShape, castsShadow = false, surfaceLevel = HermexSurfaceLevel.Raised)
+            .border(
+                width = 1.dp,
+                color = lerp(Color.Transparent, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f), selectionProgress),
+                shape = HermexCardShape,
+            )
             .clickable(enabled = card.cardId != null) {
-                if (isSelectingCards) onToggleSelection(card) else card.cardId?.let(onOpenCard)
+                if (isSelectingCards) {
+                    view.performHermexHaptic(HermexHapticEvent.Confirm, hapticsEnabled)
+                    onToggleSelection(card)
+                } else {
+                    view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
+                    card.cardId?.let(onOpenCard)
+                }
             }
             .semantics {
                 contentDescription = listOfNotNull(

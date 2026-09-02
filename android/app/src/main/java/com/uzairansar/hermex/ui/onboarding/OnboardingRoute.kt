@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
-import android.view.HapticFeedbackConstants
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
@@ -90,10 +89,15 @@ import com.uzairansar.hermex.R
 import com.uzairansar.hermex.data.repository.AuthRepository
 import com.uzairansar.hermex.data.repository.AuthState
 import com.uzairansar.hermex.ui.theme.HermexDarkContent
+import com.uzairansar.hermex.ui.theme.HermexHapticEvent
 import com.uzairansar.hermex.ui.theme.HermexSurfaceLevel
 import com.uzairansar.hermex.ui.theme.LocalHermexHapticsEnabled
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionPolicy
+import com.uzairansar.hermex.ui.theme.LocalHermexMotionScheme
 import com.uzairansar.hermex.ui.theme.hermexGlass
 import com.uzairansar.hermex.ui.theme.hermexHazeSource
+import com.uzairansar.hermex.ui.theme.performHermexHaptic
+import com.uzairansar.hermex.ui.theme.tweenOrSnap
 import kotlinx.coroutines.launch
 import com.uzairansar.hermex.ui.localization.localizedString
 import com.uzairansar.hermex.ui.SecureContentEffect
@@ -151,6 +155,8 @@ private fun OnboardingRouteContent(
         pageCount = { OnboardingFlowPolicy.PageCount },
     )
     val scope = rememberCoroutineScope()
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     var lastSettledPage by remember { mutableIntStateOf(initialPage) }
     var hasCopiedAgentPrompt by rememberSaveable { mutableStateOf(false) }
     var hasBypassedCopyReminder by rememberSaveable { mutableStateOf(false) }
@@ -232,12 +238,20 @@ private fun OnboardingRouteContent(
                     ) {
                         isShowingCopyReminder = true
                     } else if (currentPage < OnboardingFlowPolicy.ConnectPageIndex) {
-                        scope.launch { pagerState.animateScrollToPage(currentPage + 1) }
+                        scope.launch {
+                            pagerState.animateScrollToPage(
+                                currentPage + 1,
+                                animationSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                            )
+                        }
                     }
                 },
                 onJumpToConnect = {
                     scope.launch {
-                        pagerState.animateScrollToPage(OnboardingFlowPolicy.ConnectPageIndex)
+                        pagerState.animateScrollToPage(
+                            OnboardingFlowPolicy.ConnectPageIndex,
+                            animationSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
+                        )
                     }
                 },
                 onTestConnection = viewModel::testConnection,
@@ -269,6 +283,7 @@ private fun OnboardingRouteContent(
                             pagerState.animateScrollToPage(
                                 (pagerState.settledPage + 1)
                                     .coerceAtMost(OnboardingFlowPolicy.ConnectPageIndex),
+                                animationSpec = motionPolicy.tweenOrSnap(motion.listMutationMillis),
                             )
                         }
                     },
@@ -281,7 +296,7 @@ private fun OnboardingRouteContent(
 }
 
 @Composable
-private fun OnboardingWelcomePage() {
+internal fun OnboardingWelcomePage() {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val needsScrollablePortrait = configuration.fontScale >= 1.3f
@@ -1089,10 +1104,12 @@ private fun OnboardingBottomBar(
 }
 
 @Composable
-private fun OnboardingPageIndicator(
+internal fun OnboardingPageIndicator(
     pageCount: Int,
     currentPage: Int,
 ) {
+    val motion = LocalHermexMotionScheme.current
+    val motionPolicy = LocalHermexMotionPolicy.current
     val pageDescription = localizedStringFormat("Page %1\$lld of %2\$lld", currentPage + 1, pageCount)
     Row(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1109,7 +1126,9 @@ private fun OnboardingPageIndicator(
                     .background(
                         if (index == currentPage) Color.White else Color.White.copy(alpha = 0.18f),
                     )
-                    .animateContentSize(),
+                    .animateContentSize(
+                        animationSpec = motionPolicy.tweenOrSnap(motion.quickStateMillis),
+                    ),
             )
         }
     }
@@ -1145,7 +1164,7 @@ private fun OnboardingActionButton(
     }
     Button(
         onClick = {
-            if (hapticsEnabled) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            view.performHermexHaptic(HermexHapticEvent.Tap, hapticsEnabled)
             onClick()
         },
         enabled = enabled,

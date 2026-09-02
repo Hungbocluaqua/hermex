@@ -186,6 +186,7 @@ try {
     Invoke-Checked -FilePath $gradle -Arguments @(
         "--no-daemon",
         "--no-configuration-cache",
+        "--no-problems-report",
         ":app:assembleDebug",
         ":app:assembleDebugAndroidTest"
     )
@@ -212,13 +213,20 @@ Write-Host $instrumentationText
 if (
     $instrumentationText -match "FAILURES!!!" -or
     $instrumentationText -match "INSTRUMENTATION_FAILED" -or
-    $instrumentationText -notmatch "OK \(2 tests\)"
+    $instrumentationText -notmatch "OK \(6 tests\)"
 ) {
-    throw "Visual fixture instrumentation did not complete both tests successfully."
+    throw "Visual fixture instrumentation did not complete all tests successfully."
 }
 
 $deviceOutput = "/sdcard/Android/data/$PackageName/files/visual-fixtures"
-foreach ($fileName in @("onboarding-welcome.png", "frosted-surface.png")) {
+foreach ($fileName in @(
+    "onboarding-welcome.png",
+    "frosted-surface.png",
+    "production-chat.png",
+    "production-session.png",
+    "production-kanban.png",
+    "production-settings.png"
+)) {
     $destination = Join-Path $outputRoot $fileName
     Invoke-Checked -FilePath $adb -Arguments @("-s", $targetSerial, "pull", "$deviceOutput/$fileName", $destination)
     if (-not (Test-Path -LiteralPath $destination) -or (Get-Item -LiteralPath $destination).Length -eq 0) {
