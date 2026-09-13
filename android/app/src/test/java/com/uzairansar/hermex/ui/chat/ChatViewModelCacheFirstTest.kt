@@ -1,5 +1,7 @@
 package com.uzairansar.hermex.ui.chat
 
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import com.uzairansar.hermex.MainDispatcherRule
 import com.uzairansar.hermex.core.model.ChatMessage
 import com.uzairansar.hermex.core.model.SessionSummary
@@ -39,6 +41,8 @@ class ChatViewModelCacheFirstTest {
     fun cachedTranscriptRendersWhileTheBoundedNetworkPageLoads() = runTest {
         val sessionRequest = AtomicReference<RecordedRequest?>()
         val server = MockWebServer()
+        val store = androidx.lifecycle.ViewModelStore()
+        var ownedVm: ChatViewModel? = null
         try {
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse = when (request.url.encodedPath) {
@@ -86,6 +90,8 @@ class ChatViewModelCacheFirstTest {
                 sse = SseStreamClient(server.url("/"), OkHttpClient()) { emptyList() },
             )
             val viewModel = ChatViewModel("session-1", repository)
+            ownedVm = viewModel
+            store.put("fixture",viewModel)
 
             val cachedState = withTimeout(1_000) {
                 viewModel.state.first { state -> state.messages.singleOrNull()?.displayText == "cached transcript" }
@@ -103,6 +109,8 @@ class ChatViewModelCacheFirstTest {
             assertEquals("50", sessionRequest.get()?.url?.queryParameter("msg_limit"))
             assertNull(sessionRequest.get()?.url?.queryParameter("expand_renderable"))
         } finally {
+            store.clear()
+            ownedVm?.viewModelScope?.coroutineContext?.get(Job)?.join()
             server.close()
         }
     }

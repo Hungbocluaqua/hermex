@@ -61,6 +61,9 @@ data class SessionSearchResponse(
 )
 
 @Serializable
+data class SessionMetadataResponse(val session: SessionSummary? = null)
+
+@Serializable
 data class SessionResponse(
     val session: SessionDetail? = null,
 )
@@ -180,6 +183,9 @@ data class SessionSummary(
     @SerialName("read_only") val readOnly: Boolean? = null,
     @SerialName("is_read_only") val isReadOnly: Boolean? = null,
     @SerialName("match_type") val matchType: String? = null,
+    @SerialName("pre_compression_snapshot") val preCompressionSnapshot: Boolean? = null,
+    @SerialName("continuation_session_id") val continuationSessionId: String? = null,
+    @SerialName("_lineage_root_id") val lineageRootId: String? = null,
 ) {
     val stableId: String
         get() = sessionId?.takeIf { it.isNotBlank() }
@@ -526,6 +532,8 @@ data class ChatMessage(
     val name: String? = null,
     val toolCallId: String? = null,
     val toolUseId: String? = null,
+    val displayKind: String? = null,
+    val source: String? = null,
     val parts: List<JsonElement>? = null,
     val attachments: List<MessageAttachment>? = null,
     val reasoning: List<ReasoningSegment>? = null,
@@ -587,6 +595,8 @@ object ChatMessageSerializer : KSerializer<ChatMessage> {
                 ?: element["timestamp"].doubleValueOrNull()
                 ?: element["ts"].doubleValueOrNull(),
             messageId = element["message_id"].stringOrNull() ?: element["messageId"].stringOrNull(),
+            displayKind = element["display_kind"].stringOrNull(),
+            source = element["_source"].stringOrNull(),
             name = element["name"].stringOrNull(),
             toolCallId = element["tool_call_id"].stringOrNull() ?: element["toolCallId"].stringOrNull(),
             toolUseId = element["tool_use_id"].stringOrNull() ?: element["toolUseId"].stringOrNull(),
@@ -613,6 +623,8 @@ object ChatMessageSerializer : KSerializer<ChatMessage> {
                 value.name?.let { put("name", it) }
                 value.toolCallId?.let { put("tool_call_id", it) }
                 value.toolUseId?.let { put("tool_use_id", it) }
+                value.displayKind?.let { put("display_kind", it) }
+                value.source?.let { put("_source", it) }
                 value.parts?.let { put("parts", jsonEncoder.json.encodeToJsonElement(it)) }
                 value.attachments?.let { put("attachments", jsonEncoder.json.encodeToJsonElement(it)) }
                 value.reasoning?.let { put("reasoning", jsonEncoder.json.encodeToJsonElement(it)) }

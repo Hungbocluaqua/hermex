@@ -37,6 +37,8 @@ class SessionRepository(
     private val exportDirectoryProvider: (() -> File)? = null,
 ) {
     private val serverUrl = client.baseUrl.toString()
+    private val lineageEnricher = SessionLineageEnricher()
+    private val sparseLineage = SparseLineageResolver()
 
     suspend fun loadCachedSessions(includeArchived: Boolean = false): SessionPage? =
         loadCachedSessions(
@@ -53,7 +55,18 @@ class SessionRepository(
                 includeArchived = includeArchived,
                 archivedLimit = ARCHIVED_SYNC_LIMIT.takeIf { includeArchived },
             )
-            val allSessions = response.sessions.orEmpty()
+            val directlyLinked = lineageEnricher.enrich(response.sessions.orEmpty()) { id ->
+                val original = response.sessions.orEmpty().first { it.sessionId == id }
+                try {
+                    val report = client.compressionLineageReport(id)
+                    val confirmed = confirmCompressionReport(original, response.sessions.orEmpty(), report)
+                    if (!confirmed.continuationSessionId.isNullOrBlank()) confirmed
+                    else client.sessionMetadata(id).session ?: original
+                } catch (error: CancellationException) { throw error }
+                catch (_: Exception) { client.sessionMetadata(id).session }
+            }
+            val allSessions = sparseLineage.enrich(directlyLinked,
+                { client.sessionMetadata(it).session }, { client.compressionLineageReport(it) })
             val sessions = allSessions.filter { includeArchived || it.archived != true }
             val entities = allSessions.mapNotNull { CachedSessionEntity.from(serverUrl, it, now) }
             val archivedReturned = allSessions.count { it.archived == true }

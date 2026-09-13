@@ -1,5 +1,8 @@
 package com.uzairansar.hermex.ui.chat
 
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
+
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -345,8 +348,10 @@ fun ChatRoute(
     val speechScope = rememberCoroutineScope()
     val modelPickerScope = rememberCoroutineScope()
 
-    LaunchedEffect(state.openSessionId) {
+    LaunchedEffect(state.openSessionId, state.isUploadingAttachment) {
+        if (state.isUploadingAttachment) return@LaunchedEffect
         val openSessionId = state.openSessionId ?: return@LaunchedEffect
+        viewModel.preserveDraftForContinuation(context, serverId, openSessionId)
         onOpenChat(openSessionId)
         viewModel.consumeOpenSession()
     }
@@ -764,13 +769,18 @@ fun ChatRoute(
             listenPlaybackController.refreshProgress()
         }
     }
+    var showTechnicalEvents by rememberSaveable(sessionId) { mutableStateOf(false) }
+    val visibleTranscriptIndices = remember(state.messages, showTechnicalEvents) {
+        state.messages.visibleTranscriptIndices(showTechnicalEvents)
+    }
     val transcriptMessagesAfter: (MessageActionContext) -> Int = remember(
         state.messages,
+        visibleTranscriptIndices,
         chatDisplaySettings.showThinkingAndToolCards,
     ) {
         { context ->
             state.messages.indices.count { index ->
-                index > context.visibleIndex &&
+                index in visibleTranscriptIndices && index > context.visibleIndex &&
                     state.messages[index].shouldRenderTranscriptItem(chatDisplaySettings.showThinkingAndToolCards)
             }
         }
@@ -807,6 +817,16 @@ fun ChatRoute(
 
     DisposableEffect(streamNotifier, serverId, sessionId) {
         onDispose { streamNotifier.release(serverId, sessionId) }
+    }
+
+    val refreshLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(viewModel, refreshLifecycleOwner) {
+        refreshLifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                viewModel.refreshVisibleConversation()
+                delay(5_000)
+            }
+        }
     }
 
     LaunchedEffect(state.responseCompletionTrigger) {
@@ -876,6 +896,7 @@ fun ChatRoute(
                 val renderedMessages = remember(
                     state.messages,
                     state.completedToolCallGroups,
+                    visibleTranscriptIndices,
                     state.compressionReferenceCard,
                     chatDisplaySettings.showThinkingAndToolCards,
                 ) {
@@ -886,7 +907,7 @@ fun ChatRoute(
                         val shouldRender = message.shouldRenderTranscriptItem(chatDisplaySettings.showThinkingAndToolCards) ||
                             hasCompletedToolGroup ||
                             hasCompressionReference
-                        if (shouldRender) IndexedValue(index, message) else null
+                        if (shouldRender && index in visibleTranscriptIndices) IndexedValue(index, message) else null
                     }
                 }
                 LazyColumn(
@@ -904,6 +925,11 @@ fun ChatRoute(
                     ),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    item("technical-events-toggle") {
+                        androidx.compose.material3.TextButton(onClick = { showTechnicalEvents = !showTechnicalEvents }) {
+                            Text(if (showTechnicalEvents) "Masquer les événements techniques" else "Afficher les événements techniques")
+                        }
+                    }
                     if (state.hasOlderMessages) {
                         item("load-older-messages") {
                             LoadOlderMessagesButton(
