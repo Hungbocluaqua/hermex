@@ -176,6 +176,13 @@ internal data class PersistedChatPendingState(
     val importedSharedDraftRemainder: List<SharedAttachment> = emptyList(),
 )
 
+internal fun mergeContinuationDraft(
+    source: PersistedChatPendingState, target: PersistedChatPendingState,
+): PersistedChatPendingState = target.copy(
+    draft = listOf(target.draft, source.draft).filter { it.isNotBlank() }.distinct().joinToString("\n\n"),
+    pendingAttachments = (target.pendingAttachments + source.pendingAttachments).distinct(),
+)
+
 @Serializable
 internal data class PendingLocalAttachmentUpload(
     val id: String = UUID.randomUUID().toString(),
@@ -361,6 +368,8 @@ class ChatViewModel internal constructor(
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state
     private var streamJob: Job? = null
+    private var attachedStreamId: String? = null
+    private var compressedContinuation: String? = null
     private var streamPacingJob: Job? = null
     private var streamPacingOwnerId: String? = null
     private var pendingStreamingAssistantText: String = ""
@@ -442,6 +451,15 @@ class ChatViewModel internal constructor(
         }
     }
     fun updateClarificationDraft(value: String) = _state.update { it.copy(clarificationDraft = value, error = null) }
+    fun preserveDraftForContinuation(context: Context, serverId: String, next: String) {
+        if (next != compressedContinuation || next == sessionId) return
+        persistPendingState(durable = true)
+        val source = pendingStateStore?.load() ?: return
+        val target = ChatPendingStateStore(context, "$serverId\u0000$next")
+        target.save(mergeContinuationDraft(source, target.load()), durable = true)
+        // Original pending state remains intact; never transfer queued sends or running tasks.
+    }
+
     fun consumeOpenSession() = _state.update { it.copy(openSessionId = null) }
 
     override fun onCleared() {
@@ -481,6 +499,38 @@ class ChatViewModel internal constructor(
             }
         }
         super.onCleared()
+    }
+
+    private val visibleRefreshMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Called only by the resumed screen. Never reset composer or issue mutations. */
+    internal suspend fun refreshVisibleConversation() {
+        if (!visibleRefreshMutex.tryLock()) return
+        try {
+            val before = _state.value
+            if (isClearing || before.isLoading || before.isStreaming || before.openSessionId != null ||
+                before.messages.any { it.id?.startsWith("optimistic-") == true } ||
+                before.isLoadingOlderMessages || before.isRunningSessionAction || before.isEditingMessage ||
+                before.isRegeneratingMessage || sendStartJob?.isActive == true ||
+                completedTranscriptRefreshJob?.isActive == true || streamRecoveryJob?.isActive == true) return
+            val load = loadGeneration
+            val send = sendStartGeneration
+            val result = repository.loadSessionSnapshot(sessionId)
+            val current = _state.value
+            if (isClearing || load != loadGeneration || send != sendStartGeneration ||
+                current.messages != before.messages || current.isStreaming || current.isRunningSessionAction ||
+                current.isLoadingOlderMessages || current.openSessionId != null) return
+            if (result is ResultState.Data && !result.fromCache) {
+                val snapshot = result.value
+                val prefixCount = (snapshot.messagesOffset - before.messagesOffset).coerceAtLeast(0)
+                val merged = if (prefixCount <= before.messages.size && before.messagesOffset <= snapshot.messagesOffset)
+                    snapshot.copy(messages = before.messages.take(prefixCount) + snapshot.messages,
+                        messagesOffset = before.messagesOffset, hasOlderMessages = before.hasOlderMessages)
+                    else snapshot
+                applySessionSnapshot(merged, fromCache = false)
+                reconnectLoadedActiveStream(snapshot, fromCache = false)
+            }
+        } finally { visibleRefreshMutex.unlock() }
     }
 
     fun load() {
@@ -588,7 +638,7 @@ class ChatViewModel internal constructor(
         if (fromCache || streamId == null || !snapshot.isStreaming) {
             return
         }
-        if (_state.value.activeStreamId == streamId && streamJob?.isActive == true) {
+        if (attachedStreamId == streamId && streamJob?.isActive == true) {
             return
         }
         attachStream(streamId, replayAfterSeq = 0)
@@ -2723,6 +2773,7 @@ class ChatViewModel internal constructor(
                         btwStreamOwnerId = null
                         btwJob = null
                     }
+                    is SseEvent.Compressed,
                     is SseEvent.Reasoning,
                     is SseEvent.ToolStarted,
                     is SseEvent.ToolCompleted,
@@ -3130,6 +3181,8 @@ class ChatViewModel internal constructor(
         streamPacingJob?.cancel()
         streamPacingJob = null
         streamPacingOwnerId = streamId
+        if (attachedStreamId != streamId) compressedContinuation = null
+        attachedStreamId = streamId
         pendingStreamingAssistantText = ""
         var assistantText = _state.value.streamingAssistantText()
         val replayBaseText = assistantText
@@ -3159,6 +3212,9 @@ class ChatViewModel internal constructor(
                     recordStreamTransportActivity(demoteChecking = event == SseEvent.Heartbeat)
                 }
                 when (event) {
+                    is SseEvent.Compressed -> {
+                        compressedContinuation = event.continuationSessionId?.trim()?.takeIf { it.isNotEmpty() && it != sessionId }
+                    }
                     is SseEvent.Token -> {
                         val tokenText = if (replayAfterSeq == 0) {
                             val delta = replayTokenDelta(event.text, replayBaseText, replayMatchedPrefixLength)
@@ -3208,6 +3264,7 @@ class ChatViewModel internal constructor(
                         completeStream(streamId, event)
                     }
                     SseEvent.StreamEnd -> {
+                        compressedContinuation?.let { next -> _state.update { it.copy(openSessionId = next) } }
                         flushPendingStreamingAssistant()
                         if (completedResponseStreamId == streamId) {
                             finishCompletedStreamTransport(streamId)
@@ -3521,13 +3578,14 @@ class ChatViewModel internal constructor(
     }
 
     private suspend fun refreshAfterInactiveStream() {
+        compressedContinuation?.let { next ->
+            _state.update { it.copy(openSessionId = next) }
+            return
+        }
         when (val result = repository.loadSessionSnapshot(sessionId)) {
-            is ResultState.Data -> applySessionSnapshot(result.value, fromCache = result.fromCache) {
-                it.copy(
-                    isStreaming = false,
-                    activeStreamRecoveryState = ActiveStreamRecoveryState.Idle,
-                    activeStreamId = null,
-                )
+            is ResultState.Data -> {
+                applySessionSnapshot(result.value, fromCache = result.fromCache)
+                reconnectLoadedActiveStream(result.value, fromCache = result.fromCache)
             }
             is ResultState.Error -> _state.update { it.copy(error = result.message) }
             ResultState.Loading -> Unit
@@ -3758,6 +3816,12 @@ class ChatViewModel internal constructor(
     private suspend fun completeStream(streamId: String, event: SseEvent.Done) {
         if (!ChatStreamOwnershipPolicy.stillOwnsStream(streamId, _state.value.activeStreamId)) return
         flushPendingStreamingAssistant()
+        val nextSession = event.sessionId?.trim()?.takeIf { it.isNotBlank() && it != sessionId }
+            ?: compressedContinuation
+        nextSession?.let { next ->
+            compressedContinuation = next
+            _state.update { it.copy(openSessionId = next) }
+        }
         val completedSession = event.session
         val completedTranscript = completedSession?.takeIf { it.messages?.isNotEmpty() == true }
         val finalTokensPerSecond = event.usage?.tokensPerSecond?.takeIf { it.isFinite() && it > 0.0 }

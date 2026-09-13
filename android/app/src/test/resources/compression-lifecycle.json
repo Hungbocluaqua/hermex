@@ -1,0 +1,347 @@
+{
+  "rows": [
+    {
+      "session_id": "segment-1",
+      "created_at": 222271.4838,
+      "updated_at": 235855.6918,
+      "last_message_at": 233258.915,
+      "profile": "default",
+      "pre_compression_snapshot": false,
+      "parent_session_id": "segment-2",
+      "raw_source": "webui",
+      "session_source": "webui",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-3",
+      "created_at": 233766.0953,
+      "updated_at": 235662.1504,
+      "profile": "default",
+      "raw_source": "webui",
+      "session_source": "webui",
+      "parent_session_id": "segment-1",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-2",
+      "created_at": 222271.4838,
+      "updated_at": 231816.6579,
+      "profile": "default",
+      "raw_source": "webui",
+      "session_source": "webui",
+      "parent_session_id": "segment-4",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-5",
+      "created_at": 206793.556,
+      "updated_at": 224173.1092,
+      "last_message_at": 224176.9503,
+      "profile": "default",
+      "pre_compression_snapshot": true,
+      "raw_source": "desktop",
+      "session_source": "other",
+      "parent_session_id": "segment-6",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-4",
+      "created_at": 219660.8615,
+      "updated_at": 223518.9616,
+      "last_message_at": 224160.3546,
+      "profile": "default",
+      "pre_compression_snapshot": true,
+      "raw_source": "webui",
+      "session_source": "webui",
+      "parent_session_id": "segment-5",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-7",
+      "created_at": 198768.6437,
+      "updated_at": 216112.0816,
+      "last_message_at": 200736.6185,
+      "profile": "default",
+      "pre_compression_snapshot": false,
+      "parent_session_id": "segment-8",
+      "raw_source": "webui",
+      "session_source": "webui",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-8",
+      "created_at": 198768.6437,
+      "updated_at": 205694.0979,
+      "last_message_at": 200736.6185,
+      "profile": "default",
+      "pre_compression_snapshot": false,
+      "parent_session_id": "segment-9",
+      "raw_source": "webui",
+      "session_source": "webui",
+      "relationship_type": "child_session"
+    },
+    {
+      "session_id": "segment-6",
+      "created_at": 134537.9841,
+      "updated_at": 151006.4378,
+      "last_message_at": 135660.5142,
+      "profile": "default",
+      "pre_compression_snapshot": false,
+      "raw_source": "desktop",
+      "session_source": "other",
+      "parent_session_id": "segment-10",
+      "relationship_type": "child_session"
+    }
+  ],
+  "reports": {
+    "segment-1": {
+      "found": true,
+      "session_id": "segment-1",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-1",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 223485.567,
+          "updated_at": 233766.1616,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-3",
+          "role": "child_session",
+          "source": "webui",
+          "started_at": 233766.0953,
+          "updated_at": 233766.0953,
+          "end_reason": null,
+          "active": true,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-3": {
+      "found": true,
+      "session_id": "segment-3",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-3",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 233766.0953,
+          "updated_at": 233766.0953,
+          "end_reason": null,
+          "active": true,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-11",
+          "role": "child_session",
+          "source": "subagent",
+          "started_at": 234742.8007,
+          "updated_at": 234903.2304,
+          "end_reason": "agent_close",
+          "active": false,
+          "archived": false
+        },
+        {
+          "session_id": "segment-12",
+          "role": "child_session",
+          "source": "subagent",
+          "started_at": 233840.1782,
+          "updated_at": 234045.5733,
+          "end_reason": "agent_close",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-2": {
+      "found": true,
+      "session_id": "segment-2",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-2",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 222271.4838,
+          "updated_at": 223487.1677,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-1",
+          "role": "child_session",
+          "source": "webui",
+          "started_at": 223485.567,
+          "updated_at": 233766.1616,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-5": {
+      "found": true,
+      "session_id": "segment-5",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-5",
+          "role": "tip",
+          "source": "desktop",
+          "started_at": 206793.556,
+          "updated_at": 219660.9463,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-4",
+          "role": "child_session",
+          "source": "webui",
+          "started_at": 219660.8615,
+          "updated_at": 222271.7601,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-4": {
+      "found": true,
+      "session_id": "segment-4",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-4",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 219660.8615,
+          "updated_at": 222271.7601,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-2",
+          "role": "child_session",
+          "source": "webui",
+          "started_at": 222271.4838,
+          "updated_at": 223487.1677,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        },
+        {
+          "session_id": "segment-13",
+          "role": "child_session",
+          "source": "subagent",
+          "started_at": 219772.4421,
+          "updated_at": 219927.0042,
+          "end_reason": "agent_close",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-7": {
+      "found": true,
+      "session_id": "segment-7",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-7",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 206302.1419,
+          "updated_at": 228598.9592,
+          "end_reason": "idle_timeout",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [],
+      "manual_review": false
+    },
+    "segment-8": {
+      "found": true,
+      "session_id": "segment-8",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-8",
+          "role": "tip",
+          "source": "webui",
+          "started_at": 199297.7191,
+          "updated_at": 206302.2108,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-7",
+          "role": "child_session",
+          "source": "webui",
+          "started_at": 206302.1419,
+          "updated_at": 228598.9592,
+          "end_reason": "idle_timeout",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    },
+    "segment-6": {
+      "found": true,
+      "session_id": "segment-6",
+      "total_segments": 1,
+      "segments": [
+        {
+          "session_id": "segment-6",
+          "role": "tip",
+          "source": "desktop",
+          "started_at": 134537.9841,
+          "updated_at": 206793.6544,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "children": [
+        {
+          "session_id": "segment-5",
+          "role": "child_session",
+          "source": "desktop",
+          "started_at": 206793.556,
+          "updated_at": 219660.9463,
+          "end_reason": "compression",
+          "active": false,
+          "archived": false
+        }
+      ],
+      "manual_review": false
+    }
+  }
+}

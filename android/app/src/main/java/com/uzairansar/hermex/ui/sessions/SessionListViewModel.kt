@@ -27,6 +27,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,6 +98,7 @@ data class SessionListUiState(
     val isSearchingRemoteSessions: Boolean = false,
     val searchError: String? = null,
     val showArchived: Boolean = false,
+    val showCompressionSegments: Boolean = false,
     val showCliSessions: Boolean = true,
     val showClaudeCodeSessions: Boolean = true,
     val sessionRowDisplaySettings: SessionRowDisplaySettings = SessionRowDisplaySettings(),
@@ -145,7 +147,11 @@ data class SessionListUiState(
                 .filter { query.isEmpty() || it.searchableText.contains(query) }
                 .sortedForSessionList()
 
-            if (query.isEmpty() || remoteSearchQuery != query) return localMatches
+            if (query.isEmpty() || remoteSearchQuery != query) {
+                return if (showCompressionSegments) localMatches
+                else projectFiltered.collapseCompressionSegments(localMatches.map { it.stableId }.toSet())
+                    .sortedForSessionList()
+            }
 
             val localMatchIds = localMatches.mapNotNullTo(mutableSetOf()) { it.sessionId }
             val sessionsById = projectFiltered.mapNotNull { session ->
@@ -154,7 +160,9 @@ data class SessionListUiState(
             val remoteMatches = remoteContentSearchSessionIds.mapNotNull { sessionId ->
                 if (sessionId in localMatchIds) null else sessionsById[sessionId]
             }
-            return localMatches + remoteMatches.sortedForSessionList()
+            val matches = localMatches + remoteMatches.sortedForSessionList()
+            return if (showCompressionSegments) matches else projectFiltered
+                .collapseCompressionSegments(matches.map { it.stableId }.toSet())
         }
 
     val scheduledSessionGroups: ScheduledSessionGroups
@@ -298,6 +306,14 @@ class SessionListViewModel(
         refreshProfiles()
     }
 
+    internal suspend fun refreshWhileVisible() {
+        if (refreshJob?.isActive == true || _state.value.isMutating || _state.value.isSwitchingProfile) return
+        refresh(clearNotice = false)
+        try { refreshJob?.join() } finally {
+            if (!kotlinx.coroutines.currentCoroutineContext().isActive) refreshJob?.cancel()
+        }
+    }
+
     fun refresh(clearNotice: Boolean = true) {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
@@ -423,6 +439,10 @@ class SessionListViewModel(
                 searchError = null,
             )
         }
+    }
+
+    fun toggleCompressionSegments() {
+        _state.update { it.copy(showCompressionSegments = !it.showCompressionSegments) }
     }
 
     fun toggleArchived() {

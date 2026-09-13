@@ -1,5 +1,8 @@
 package com.uzairansar.hermex.ui.sessions
 
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
+
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -216,8 +219,14 @@ fun SessionListRoute(
 
     // Navigation keeps this ViewModel alive while chat is on top. Refresh each time
     // the sessions destination re-enters composition so newly changed chats appear.
-    LaunchedEffect(viewModel) {
-        viewModel.refreshAllOnVisible()
+    val listLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(viewModel, listLifecycleOwner) {
+        listLifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                viewModel.refreshWhileVisible()
+                kotlinx.coroutines.delay(5_000)
+            }
+        }
     }
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -344,6 +353,11 @@ fun SessionListRoute(
                         onClear = viewModel::clearSearch,
                         onSettings = onOpenSettings,
                     )
+                }
+                item {
+                    TextButton(onClick = viewModel::toggleCompressionSegments) {
+                        Text(if (state.showCompressionSegments) "Regrouper les conversations" else "Afficher les segments de compression")
+                    }
                 }
                 if (state.showArchived) {
                     item {

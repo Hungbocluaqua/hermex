@@ -31,7 +31,12 @@ class HermexDatabaseMigrationInstrumentedTest {
     }
 
     @Test
-    fun migrationFromOneToTwoPreservesRowsAndAddsSessionMetadataColumns() {
+    fun migrationFromOnePreservesRowsAndAddsSessionMetadataColumns() = verifyMigration(1)
+
+    @Test
+    fun migrationFromTwoPreservesRowsAndAddsCompressionMetadataColumns() = verifyMigration(2)
+
+    private fun verifyMigration(version: Int) {
         SQLiteDatabase.openOrCreateDatabase(databaseFile, null).use { db ->
             db.execSQL(CREATE_V1_SESSIONS)
             db.execSQL(CREATE_V1_MESSAGES)
@@ -46,7 +51,11 @@ class HermexDatabaseMigrationInstrumentedTest {
                     "VALUES (?, ?, ?, ?, ?, ?)",
                 arrayOf<Any>("server::session", "https://server/", "session", "Preserved", 1L, Long.MAX_VALUE),
             )
-            db.version = 1
+            if (version == 2) {
+                listOf("isCliSession", "readOnly", "isReadOnly").forEach { db.execSQL("ALTER TABLE cached_sessions ADD COLUMN $it INTEGER") }
+                listOf("sourceTag", "rawSource", "sessionSource", "sourceLabel", "parentSessionId", "relationshipType").forEach { db.execSQL("ALTER TABLE cached_sessions ADD COLUMN $it TEXT") }
+            }
+            db.version = version
         }
 
         val database = HermexDatabase.create(context)
@@ -72,6 +81,9 @@ class HermexDatabaseMigrationInstrumentedTest {
                             "relationshipType",
                             "readOnly",
                             "isReadOnly",
+                            "preCompressionSnapshot",
+                            "continuationSessionId",
+                            "lineageRootId",
                         ),
                     ),
                 )

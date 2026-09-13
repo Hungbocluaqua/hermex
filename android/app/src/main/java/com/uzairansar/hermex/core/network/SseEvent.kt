@@ -14,6 +14,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 sealed interface SseEvent {
+    data class Compressed(val continuationSessionId: String?) : SseEvent
     data class Token(val text: String) : SseEvent
     data class InterimAssistant(val text: String, val alreadyStreamed: Boolean?) : SseEvent
     data class Reasoning(val text: String) : SseEvent
@@ -103,6 +104,9 @@ object SseEventDecoder {
         val type = eventType ?: "message"
         return try {
             when (type) {
+                "compressed" -> HermesJson.decodeFromString<TerminalPayload>(data).let {
+                    SseEvent.Compressed(it.continuationSessionId ?: it.newSessionId)
+                }
                 "token" -> SseEvent.Token(HermesJson.decodeFromString<TextPayload>(data).text.orEmpty())
                 "interim_assistant" -> HermesJson.decodeFromString<InterimAssistantPayload>(data).let {
                     SseEvent.InterimAssistant(it.text.orEmpty(), it.alreadyStreamed)
